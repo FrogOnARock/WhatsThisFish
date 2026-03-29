@@ -1,0 +1,30 @@
+# Data source configuration
+
+# iNaturalist S3 Buckets
+s3:
+  bucket: inaturalist-open-data
+  datasets:
+    observations: observations.csv.gz
+    photos: photos.csv.gz
+    taxa: taxa.csv.gz
+  output_paths:
+    observations: observations.parquet
+    photos: photos.parquet
+    taxa: taxa.parquet
+
+# Google Cloud Storage Bucket Prefixes
+gcs:
+  bucket: whats-that-fish
+  prefixes:
+    gcs_train: training/
+    gcs_test: validation/
+    gcs_contributions: contributions/
+
+# Dataset names
+datasets:
+  classification:
+    training: inat_train
+    validation: inat_val
+  detection:
+    training: lila_train
+    validation: lila_test
