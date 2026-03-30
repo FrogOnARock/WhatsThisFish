@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "albumentations>=1.4.0",
+    "alembic>=1.18.4",
     "boto3>=1.42.78",
     "ensemble-boxes>=1.0.8",
     "gcsfs>=2024.2.0",

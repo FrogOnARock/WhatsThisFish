@@ -1,6 +1,6 @@
 # Data source configuration
 
-# iNaturalist S3 Buckets
+# iNaturalist S3 Buckets ADD SCHEMA
 s3:
   bucket: inaturalist-open-data
   datasets:

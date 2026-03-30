@@ -6,6 +6,7 @@ from pathlib import Path
 from .gcs_client import GCSClient
 from .inaturalist_dataset import INaturalistDataset
 from .download_lila import LilaDataset
+import asyncio
 
 
 class DataFactory:
@@ -28,17 +29,12 @@ class DataFactory:
 
         print(self.data_path)
         await self.inaturalist_dataset.retrieve_s3_data_by_bucket(str(self.data_path))
-        await self.lila_dataset.extract_lila_images()
+        # await self.lila_dataset.extract_lila_images()
         # self.lila_dataset.download_coco_json()
 
         """
         if self.datasets == "all":
             
-
-
-
-
-
 
         else if datasets == "classification":
             for key, value in self.inaturalist_dataset.s3_config.datasets.items():
@@ -56,10 +52,17 @@ class DataFactory:
 
         """
 
-if __name__ == "__main__":
-    datafactory = DataFactory("all")
-    datafactory.run_data_extraction()
 
+async def run_data_factory():
+    datafactory = DataFactory("all")
+    return await datafactory.run_data_extraction()
+
+
+def main():
+    return asyncio.run(run_data_factory())
+
+if __name__ == "__main__":
+    main()
 
 
 

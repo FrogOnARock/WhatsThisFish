@@ -1,4 +1,5 @@
 import boto3 as b3
+import pylab as pl
 from aiohttp import ConnectionTimeoutError
 from botocore import UNSIGNED
 from botocore.client import Config
@@ -65,7 +66,7 @@ class INaturalistDataset:
             bucket_name = self.bucket_name
             object = self.s3_client.head_object(Bucket=bucket_name, Key=key)
             size = object["ContentLength"]
-            print(f"Size of {key} is {size} bytes")
+            self.logger.debug(f"Size of {key} is {size} bytes")
 
             last_reported = 0
             progress_bytes = 0
@@ -75,7 +76,7 @@ class INaturalistDataset:
                 pct = int((progress_bytes / size) * 100)
                 if pct >= last_reported + 10:
                     last_reported = pct
-                    print(f"Downloaded {pct}%")
+                    self.logger.debug(f"Downloaded {pct}%")
 
             self.s3_client.download_file(bucket_name, key, output_raw, Callback=progress)
 
@@ -89,8 +90,12 @@ class INaturalistDataset:
                 os.remove(output_raw)
 
             if str(output_raw).endswith(".csv.gz"):
+                if key == "taxa.csv.gz":
+                    schema_override = {"rank_level": pl.float64}
+                else:
+                    schema_override = None
                 self.logger.info(f"Converting {key} to parquet at {output_ext}")
-                polars.scan_csv(output_raw).sink_parquet(output_ext)
+                polars.scan_csv(output_raw, separator='\t', ignore_errors=True, schema_override=schema_override).sink_parquet(output_ext)
                 self.logger.info(f"Converted {key}, removing csv file.")
                 os.remove(output_raw)
 
