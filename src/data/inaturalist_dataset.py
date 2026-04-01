@@ -1,5 +1,5 @@
 import boto3 as b3
-import pylab as pl
+import polars as pl
 from aiohttp import ConnectionTimeoutError
 from botocore import UNSIGNED
 from botocore.client import Config
@@ -10,7 +10,6 @@ from ..config import _get_logger
 import tarfile
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from botocore.exceptions import ClientError, ConnectionError, ConnectionClosedError
-import polars
 load_dotenv()
 
 
@@ -91,11 +90,11 @@ class INaturalistDataset:
 
             if str(output_raw).endswith(".csv.gz"):
                 if key == "taxa.csv.gz":
-                    schema_override = {"rank_level": pl.float64}
+                    schema_overrides = {"rank_level": pl.Float64}
                 else:
-                    schema_override = None
+                    schema_overrides = None
                 self.logger.info(f"Converting {key} to parquet at {output_ext}")
-                polars.scan_csv(output_raw, separator='\t', ignore_errors=True, schema_override=schema_override).sink_parquet(output_ext)
+                pl.scan_csv(output_raw, separator='\t', ignore_errors=True, schema_overrides=schema_overrides).sink_parquet(output_ext)
                 self.logger.info(f"Converted {key}, removing csv file.")
                 os.remove(output_raw)
 
@@ -125,10 +124,110 @@ class INaturalistDataset:
         except ValueError as e:
             raise e
 
-    # def filter_images_by_taxon(self, taxon_id: int):
+    def build_filtered_dataset(
+        self,
+        data_path: str,
+        taxon_ids: int | list[int],
+        output_name: str = "dataset.parquet",
+    ) -> str:
+        """
+        Builds a single filtered parquet containing photo metadata joined with
+        observation data for research-grade observations of the specified taxa.
 
+        Pipeline stages are sunk to disk between steps to avoid holding large
+        intermediate results in memory:
+          1. Filter taxa (small, collected in memory)
+          2. Filter observations → sink to intermediate parquet
+          3. Stream-join photos against intermediate observations → sink to output
 
+        Output columns: photo_uuid, photo_id, observation_uuid, extension,
+            license, width, height, position, observer_id, latitude, longitude,
+            observed_on, taxon_id
 
+        :param data_path: path to the data directory containing taxa/observations/photos parquets
+        :param taxon_ids: a single taxon_id or list of taxon_ids to filter by
+        :param output_name: filename for the output parquet
+        :return: path to the output parquet
+        """
+        if isinstance(taxon_ids, int):
+            taxon_ids = [taxon_ids]
+
+        taxa_path = os.path.join(data_path, "taxa.parquet")
+        obs_path = os.path.join(data_path, "observations.parquet")
+        photos_path = os.path.join(data_path, "photos.parquet")
+        obs_intermediate_path = os.path.join(data_path, "_obs_intermediate.parquet")
+        output_path = os.path.join(data_path, output_name)
+
+        # --- 1. Filter taxa (small table ~1.6M rows, safe to collect) ---
+        self.logger.info(f"Filtering taxa for taxon_ids={taxon_ids}")
+        taxa = pl.read_parquet(taxa_path)
+
+        id_match = pl.col("taxon_id").is_in(taxon_ids)
+        ancestry_match = pl.lit(False)
+        for tid in taxon_ids:
+            pattern = rf"(^|/){tid}($|/)"
+            ancestry_match = ancestry_match | pl.col("ancestry").str.contains(pattern)
+
+        filtered_taxa = taxa.filter((id_match | ancestry_match) & pl.col("active"))
+        taxon_id_series = filtered_taxa.get_column("taxon_id").implode()
+        self.logger.info(f"Found {filtered_taxa.shape[0]} active taxa")
+        del taxa, filtered_taxa
+
+        # --- 2. Filter observations → sink to intermediate parquet ---
+        self.logger.info("Sinking filtered observations to intermediate parquet")
+        (
+            pl.scan_parquet(obs_path)
+            .filter(
+                pl.col("taxon_id").is_in(taxon_id_series)
+                & (pl.col("quality_grade") == "research")
+            )
+            .select(
+                "observation_uuid",
+                "observer_id",
+                "latitude",
+                "longitude",
+                "observed_on",
+                "taxon_id",
+            )
+            .sink_parquet(obs_intermediate_path)
+        )
+        del taxon_id_series
+
+        obs_count = pl.scan_parquet(obs_intermediate_path).select(pl.len()).collect().item()
+        self.logger.info(f"Intermediate observations: {obs_count:,} rows")
+
+        # --- 3. Stream-join photos against intermediate observations → sink ---
+        self.logger.info("Joining photos to observations (streaming)")
+        obs_lazy = pl.scan_parquet(obs_intermediate_path)
+        photos_lazy = pl.scan_parquet(photos_path)
+
+        (
+            photos_lazy
+            .join(obs_lazy, on="observation_uuid", how="inner")
+            .select(
+                "photo_uuid",
+                "photo_id",
+                "observation_uuid",
+                "extension",
+                "license",
+                "width",
+                "height",
+                "position",
+                "observer_id",
+                "latitude",
+                "longitude",
+                "observed_on",
+                "taxon_id",
+            )
+            .sink_parquet(output_path)
+        )
+
+        # Clean up intermediate file
+        os.remove(obs_intermediate_path)
+
+        count = pl.scan_parquet(output_path).select(pl.len()).collect().item()
+        self.logger.info(f"Dataset complete: {count:,} photo records in {output_path}")
+        return output_path
 
 
 
