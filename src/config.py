@@ -9,6 +9,7 @@ import sys
 
 @dataclass
 class S3Config:
+    base_url: str
     bucket: str
     datasets: dict[str, str]
     output_paths: dict[str, str]

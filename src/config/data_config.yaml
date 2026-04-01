@@ -2,6 +2,7 @@
 
 # iNaturalist S3 Buckets ADD SCHEMA
 s3:
+  base_url: https://inaturalist-open-data.s3.amazonaws.com/photos
   bucket: inaturalist-open-data
   datasets:
     observations: observations.csv.gz
@@ -11,7 +12,8 @@ s3:
     observations: observations.parquet
     photos: photos.parquet
     taxa: taxa.parquet
-Ac
+
+
 # Google Cloud Storage Bucket Prefixes
 gcs:
   bucket: whats-that-fish
@@ -19,6 +21,7 @@ gcs:
     gcs_train: training/
     gcs_test: validation/
     gcs_contributions: contributions/
+    gcs_object_detection: object_detection/
 
 # Dataset names
 datasets:
