@@ -151,7 +151,8 @@ class LilaDataset:
         self,
         images_df: pl.DataFrame,
         total_images: int = 100_000,
-        max_source_proportion: float = 0.15,
+        max_pos_per_source: int = 5_000,
+        max_neg_proportion: float = 0.125,
         seed: int = 42,
     ) -> pl.DataFrame:
         """Sample a domain-balanced subset of images.
@@ -159,66 +160,60 @@ class LilaDataset:
         This method reduces overrepresented source datasets and balances
         the positive:negative ratio within the total_images budget.
 
-        Phase 1: Per-source capping with 50/50 pos/neg split.
-        Phase 2: Per-source rebalancing to enforce 1:1 pos/neg globally,
-                 adding/removing from the most overrepresented source.
+        Phase 1: Even positive distribution across sources, greedy negative inclusion.
+        Phase 2: Per-image rebalancing to enforce 1:1 pos/neg globally.
 
         Args:
             images_df: Cleaned images DataFrame from _load_and_clean().
             total_images: Target number of images to include in the sample.
-            max_source_proportion: Max fraction any single source can occupy.
+            max_pos_per_source: Max positive images any single source can contribute.
+            max_neg_proportion: Max fraction of total_images any single source
+                                can contribute as negatives (default 12.5%).
             seed: Random seed for reproducibility.
 
         Returns:
             Filtered images_df containing only the selected sample.
         """
-        # Compute per-source caps
         sources = images_df["dataset"].unique().to_list()
-        self.logger.info(f"Sources: {sources}")
-        max_images = int(total_images * max_source_proportion)
+        num_sources = len(sources)
+        self.logger.info(f"Sources ({num_sources}): {sources}")
+
+        max_neg_per_source = int(total_images * max_neg_proportion)
+
+        self.logger.info(
+            f"Phase 1 caps — max pos/source: {max_pos_per_source:,}, "
+            f"max neg/source: {max_neg_per_source:,}"
+        )
 
         # ── Phase 1: Per-source capping ──────────────────────────────────
         sampled_parts: list[pl.DataFrame] = []
 
         for source in sources:
-            # Set a max source count for the source
             source_df = images_df.filter(pl.col("dataset") == source)
-            max_source_count = min(source_df.height, max_images)
-
-            # Filter data source to get positive and negative samples
             pos_df = source_df.filter(pl.col("has_fish"))
             neg_df = source_df.filter(~pl.col("has_fish"))
 
-            if source_df.height > max_source_count:
-                # Over cap — split budget 50/50 between pos and neg
-                max_pos = int(min(max_source_count / 2, pos_df.height))
-
-                sample_pos_df = pos_df.sample(n=max_pos, shuffle=True, seed=seed)
-
-                if neg_df.height > 0:
-                    n_neg = int(min(max_pos, neg_df.height))
-                    sample_neg_df = neg_df.sample(n=n_neg, shuffle=True, seed=seed)
-                    sample_df = pl.concat([sample_pos_df, sample_neg_df])
-                    self.logger.info(
-                        f"  {source}: sampled {sample_df.height:,} images "
-                        f"({sample_pos_df.height:,} pos, {sample_neg_df.height:,} neg)"
-                    )
-                else:
-                    sample_df = sample_pos_df
-                    self.logger.info(
-                        f"  {source}: sampled {sample_df.height:,} images "
-                        f"({sample_pos_df.height:,} pos, no negatives available)"
-                    )
-
-                sampled_parts.append(sample_df)
-
+            # Sample positives: up to cap or all available
+            n_pos = min(pos_df.height, max_pos_per_source)
+            if n_pos < pos_df.height:
+                sampled_pos = pos_df.sample(n=n_pos, shuffle=True, seed=seed)
             else:
-                # Small source — keep everything
-                sampled_parts.append(source_df)
-                self.logger.info(
-                    f"  {source}: kept all {source_df.height:,} "
-                    f"({pos_df.height:,} pos, {neg_df.height:,} neg)"
-                )
+                sampled_pos = pos_df
+            sampled_parts.append(sampled_pos)
+
+            # Sample negatives: up to cap or all available
+            n_neg = min(neg_df.height, max_neg_per_source)
+            if n_neg > 0:
+                if n_neg < neg_df.height:
+                    sampled_neg = neg_df.sample(n=n_neg, shuffle=True, seed=seed)
+                else:
+                    sampled_neg = neg_df
+                sampled_parts.append(sampled_neg)
+
+            self.logger.info(
+                f"  {source}: {n_pos:,} pos, {n_neg:,} neg "
+                f"(from {pos_df.height:,} / {neg_df.height:,} available)"
+            )
 
         adj_images_df = pl.concat(sampled_parts)
 
@@ -237,81 +232,96 @@ class LilaDataset:
         ids_in_sample = set(adj_images_df["id"].to_list())
 
         while pos_count != neg_count:
-            # Find the source with the most records
-            source_most_records = (
+            # Rank sources by count descending each iteration
+            sorted_sources = (
                 adj_images_df.group_by("dataset")
                 .len()
                 .sort("len", descending=True)
-                .item(0, "dataset")
-            )
+            )["dataset"].to_list()
 
             pos_to_remove_add = max_pos_images - pos_count
             neg_to_remove_add = max_pos_images - neg_count
 
-            if pos_to_remove_add % 10 == 0:
-                self.logger.debug(f"Pos to remove/add: {pos_to_remove_add:,}")
-            if neg_to_remove_add % 10 == 0:
-                self.logger.debug(f"Neg to remove/add: {neg_to_remove_add:,}")
+            if (pos_count + neg_count) % 100 == 0:
+                self.logger.debug(
+                    f"Rebalancing: {pos_count:,} pos, {neg_count:,} neg "
+                    f"(pos delta: {pos_to_remove_add:+,}, neg delta: {neg_to_remove_add:+,})"
+                )
 
-            # Remove excess positives (one at a time from biggest source)
+            made_progress = False
+
+            # Remove excess positives — try each source biggest-first
             if pos_to_remove_add < 0:
-                removal_id = (
-                    adj_images_df.filter(
-                        (pl.col("dataset") == source_most_records) & pl.col("has_fish")
+                for source in sorted_sources:
+                    candidates = adj_images_df.filter(
+                        (pl.col("dataset") == source) & pl.col("has_fish")
                     )
-                    .sample(n=1)
-                    .select(pl.col("id"))
-                    .item(0)
-                )
-                adj_images_df = adj_images_df.filter(pl.col("id") != removal_id)
-                ids_in_sample.discard(removal_id)
-                pos_count -= 1
-                continue
+                    if candidates.height == 0:
+                        continue
+                    removal_id = candidates.sample(n=1)[0, "id"]
+                    adj_images_df = adj_images_df.filter(pl.col("id") != removal_id)
+                    ids_in_sample.discard(removal_id)
+                    pos_count -= 1
+                    made_progress = True
+                    break
 
-            # Remove excess negatives (one at a time from biggest source)
-            if neg_to_remove_add < 0:
-                removal_id = (
-                    adj_images_df.filter(
-                        (pl.col("dataset") == source_most_records) & ~pl.col("has_fish")
+            # Remove excess negatives — try each source biggest-first
+            elif neg_to_remove_add < 0:
+                for source in sorted_sources:
+                    candidates = adj_images_df.filter(
+                        (pl.col("dataset") == source) & ~pl.col("has_fish")
                     )
-                    .sample(n=1)
-                    .select(pl.col("id"))
-                    .item(0)
-                )
-                adj_images_df = adj_images_df.filter(pl.col("id") != removal_id)
-                ids_in_sample.discard(removal_id)
-                neg_count -= 1
-                continue
+                    if candidates.height == 0:
+                        continue
+                    removal_id = candidates.sample(n=1)[0, "id"]
+                    adj_images_df = adj_images_df.filter(pl.col("id") != removal_id)
+                    ids_in_sample.discard(removal_id)
+                    neg_count -= 1
+                    made_progress = True
+                    break
 
-            # Add missing positives (one at a time from biggest source's pool)
-            if pos_to_remove_add > 0:
-                available = images_df.filter(
-                    (pl.col("dataset") == source_most_records)
-                    & pl.col("has_fish")
-                    & ~pl.col("id").is_in(list(ids_in_sample))
-                )
-                if available.height > 0:
+            # Add missing positives — try each source biggest-first
+            elif pos_to_remove_add > 0:
+                for source in sorted_sources:
+                    available = images_df.filter(
+                        (pl.col("dataset") == source)
+                        & pl.col("has_fish")
+                        & ~pl.col("id").is_in(list(ids_in_sample))
+                    )
+                    if available.height == 0:
+                        continue
                     addition = available.sample(n=1)
-                    new_id = addition["id"].item(0)
+                    new_id = addition[0, "id"]
                     adj_images_df = pl.concat([adj_images_df, addition])
                     ids_in_sample.add(new_id)
                     pos_count += 1
-                continue
+                    made_progress = True
+                    break
 
-            # Add missing negatives (one at a time from biggest source's pool)
-            if neg_to_remove_add > 0:
-                available = images_df.filter(
-                    (pl.col("dataset") == source_most_records)
-                    & ~pl.col("has_fish")
-                    & ~pl.col("id").is_in(list(ids_in_sample))
-                )
-                if available.height > 0:
+            # Add missing negatives — try each source biggest-first
+            elif neg_to_remove_add > 0:
+                for source in sorted_sources:
+                    available = images_df.filter(
+                        (pl.col("dataset") == source)
+                        & ~pl.col("has_fish")
+                        & ~pl.col("id").is_in(list(ids_in_sample))
+                    )
+                    if available.height == 0:
+                        continue
                     addition = available.sample(n=1)
-                    new_id = addition["id"].item(0)
+                    new_id = addition[0, "id"]
                     adj_images_df = pl.concat([adj_images_df, addition])
                     ids_in_sample.add(new_id)
                     neg_count += 1
-                continue
+                    made_progress = True
+                    break
+
+            if not made_progress:
+                self.logger.warning(
+                    f"Cannot reach 1:1 balance — no sources can provide "
+                    f"the needed class. Stopping at {pos_count:,} pos, {neg_count:,} neg"
+                )
+                break
 
         self.logger.info(
             f"After rebalancing: {adj_images_df.height:,} images "
