@@ -147,6 +147,53 @@ class LilaDataset:
 
         return images_df, annotations_df
 
+    @staticmethod
+    def _stratified_sample(
+        df: pl.DataFrame, n: int, seed: int
+    ) -> list[pl.DataFrame]:
+        """Sample n rows from df, preserving the natural is_train ratio.
+
+        Splits df into train/val groups and allocates n proportionally.
+        Returns a list of DataFrames (one per non-empty split) to be
+        appended to sampled_parts.
+        """
+        if n == 0:
+            return []
+        if n >= df.height:
+            return [df]
+
+        train_df = df.filter(pl.col("is_train"))
+        val_df = df.filter(~pl.col("is_train"))
+
+        # Proportional allocation — give rounding remainder to the larger split
+        train_ratio = train_df.height / df.height if df.height > 0 else 0.0
+        n_train = round(n * train_ratio)
+        n_val = n - n_train
+
+        # Clamp to available counts and redistribute overflow
+        n_train = min(n_train, train_df.height)
+        n_val = min(n_val, val_df.height)
+        # If one split couldn't fill its allocation, give remainder to the other
+        shortfall = n - (n_train + n_val)
+        if shortfall > 0:
+            extra_train = min(shortfall, train_df.height - n_train)
+            n_train += extra_train
+            shortfall -= extra_train
+            n_val += min(shortfall, val_df.height - n_val)
+
+        parts: list[pl.DataFrame] = []
+        if n_train > 0:
+            if n_train < train_df.height:
+                parts.append(train_df.sample(n=n_train, shuffle=True, seed=seed))
+            else:
+                parts.append(train_df)
+        if n_val > 0:
+            if n_val < val_df.height:
+                parts.append(val_df.sample(n=n_val, shuffle=True, seed=seed))
+            else:
+                parts.append(val_df)
+        return parts
+
     def sample_balanced_dataset(
         self,
         images_df: pl.DataFrame,
@@ -185,7 +232,7 @@ class LilaDataset:
             f"max neg/source: {max_neg_per_source:,}"
         )
 
-        # ── Phase 1: Per-source capping ──────────────────────────────────
+        # ── Phase 1: Per-source capping with train/val stratification ────
         sampled_parts: list[pl.DataFrame] = []
 
         for source in sources:
@@ -193,22 +240,18 @@ class LilaDataset:
             pos_df = source_df.filter(pl.col("has_fish"))
             neg_df = source_df.filter(~pl.col("has_fish"))
 
-            # Sample positives: up to cap or all available
+            # Sample positives: up to cap, stratified by is_train
             n_pos = min(pos_df.height, max_pos_per_source)
-            if n_pos < pos_df.height:
-                sampled_pos = pos_df.sample(n=n_pos, shuffle=True, seed=seed)
-            else:
-                sampled_pos = pos_df
-            sampled_parts.append(sampled_pos)
+            sampled_parts.extend(
+                self._stratified_sample(pos_df, n_pos, seed)
+            )
 
-            # Sample negatives: up to cap or all available
+            # Sample negatives: up to cap, stratified by is_train
             n_neg = min(neg_df.height, max_neg_per_source)
             if n_neg > 0:
-                if n_neg < neg_df.height:
-                    sampled_neg = neg_df.sample(n=n_neg, shuffle=True, seed=seed)
-                else:
-                    sampled_neg = neg_df
-                sampled_parts.append(sampled_neg)
+                sampled_parts.extend(
+                    self._stratified_sample(neg_df, n_neg, seed)
+                )
 
             self.logger.info(
                 f"  {source}: {n_pos:,} pos, {n_neg:,} neg "

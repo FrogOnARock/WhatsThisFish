@@ -29,8 +29,8 @@ class DataFactory:
 
         print(self.data_path)
         await self.inaturalist_dataset.retrieve_s3_data_by_bucket(str(self.data_path))
-        # await self.lila_dataset.extract_lila_images()
-        # self.lila_dataset.download_coco_json()
+        self.lila_dataset.download_coco_json()
+        await self.lila_dataset.extract_lila_images()
 
         """
         if self.datasets == "all":
