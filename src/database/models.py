@@ -6,10 +6,10 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
-    String,
+    String, func, DateTime
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-
+from sqlalchemy.sql.schema import UniqueConstraint
 from whatsthatfish.src.database.base import Base
 
 
@@ -80,4 +80,52 @@ class InatPhoto(Base):
     __table_args__ = (
         Index("ix_inat_photos_observation_uuid", "observation_uuid"),
         Index("ix_inat_photos_photo_id", "photo_id"),
+    )
+
+class LilaAnnotations(Base):
+    __tablename__ = "lila_annotations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    image_id: Mapped[str] = mapped_column(String(255),
+                                          ForeignKey("lila_collected_images.file_name"))
+    category_id: Mapped[str] = mapped_column(String(255))
+    x: Mapped[float] = mapped_column(Float)
+    y: Mapped[float] = mapped_column(Float)
+    w: Mapped[float] = mapped_column(Float)
+    h: Mapped[float] = mapped_column(Float)
+
+    collected_images: Mapped["LilaCollectedImages"] = relationship(back_populates="annotations")
+
+    __table_args__ = (
+        Index("ix_lila_annotations_image_id", "image_id"),
+        Index("ix_lila_annotations_category_id", "category_id")
+    )
+
+
+class LilaCollectedImages(Base):
+    __tablename__ = "lila_collected_images"
+
+    file_name: Mapped[str] = mapped_column(String(255), primary_key=True)
+    dataset: Mapped[str] = mapped_column(String(255))
+    is_train: Mapped[bool] = mapped_column(Boolean)
+
+    annotations: Mapped[list["LilaAnnotations"]] = relationship(back_populates="collected_images")
+
+    __table_args__ = (
+        Index("ix_lila_collected_images_file_name", "file_name"),
+        Index("ix_lila_collected_images_dataset", "dataset")
+    )
+
+
+class SuccessfulUploads(Base):
+    __tablename__ = "successful_uploads"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    identifier: Mapped[str] = mapped_column(String(255))
+    source: Mapped[str] = mapped_column(String(255))
+    uploaded_at: Mapped[str] = mapped_column(DateTime, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("identifier", "source", name="uq_identifier_source"),
+        Index("ix_successful_uploads_source", "source"),
     )

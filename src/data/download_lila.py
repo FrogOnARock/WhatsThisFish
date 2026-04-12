@@ -15,16 +15,18 @@ Pipeline:
     4. Download selected images from GCS
 """
 
+import asyncio
 import json
 from pathlib import Path
 
+import aiohttp
 import polars as pl
-from google.api_core.exceptions import ClientError, ServerError
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
-from tqdm import tqdm
+from google.api_core.exceptions import ClientError, ServerError, ServiceUnavailable, TooManyRequests, GoogleAPICallError
+from gcloud.aio.storage import Storage as GCSAsyncStorage
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type, retry_if_exception
 
-from ..config import _get_logger
-
+from .photo_transfer import TransferProgressTracker, _retry_logic, _log_retry as _log_retry_transfer
+from ..config import _get_logger, GCSConfig
 
 def _log_retry(retry_state):
     logger = _get_logger("LilaDataset")
@@ -34,17 +36,45 @@ def _log_retry(retry_state):
         f"Waiting {retry_state.next_action.sleep:.1f}s before retry."
     )
 
+def _retry_logic(exc: BaseException) -> bool:
+    """Retry logic for aiohttp requests."""
+    if isinstance(exc, aiohttp.ClientResponseError):
+        return exc.status in (429, 500, 502, 503, 504)
+
+    if isinstance(exc, aiohttp.ClientConnectorError):
+        return True
+
+    if isinstance(exc, (ServiceUnavailable, TooManyRequests, GoogleAPICallError)):
+        return True
+
+    return False
 
 class LilaDataset:
 
-    def __init__(self, gcs):
+    # LILA public GCS bucket served over HTTPS — no auth needed
+    LILA_BASE_URL = "https://storage.googleapis.com/public-datasets-lila/community-fish-detection-dataset"
+
+    def __init__(self, gcs, data_path: str, gcs_config: GCSConfig, concurrency: int = 50):
         self.gcs_client = gcs.get_gcs_client()
         self.logger = _get_logger("LilaDataset")
         self.ann_out_dir = Path(__file__).parents[2] / "data" / "metadata" / "lila"
-        self.img_out_dir = Path(__file__).parents[2] / "data" / "raw" / "lila" / "images"
         self.gcs_bucket = "public-datasets-lila"
         self.gcs_prefix = "community-fish-detection-dataset"
+        self.data_path = data_path
         self.bucket = self.gcs_client.bucket(self.gcs_bucket)
+        self._tracker = TransferProgressTracker(
+            data_path=self.data_path,
+            id_column="file_name",
+            parquet_path="lila_transfer_progress.parquet",
+            wal_path="lila_transfer_progress.wal.csv",
+        )
+        self._gcs_config = gcs_config
+        self._concurrency = concurrency
+        self._semaphore = asyncio.Semaphore(concurrency)
+
+        self._transferred: int = 0
+        self._failed: int = 0
+        self._total: int = 0
 
     @retry(retry=(retry_if_exception_type(ClientError) |
                   retry_if_exception_type(ServerError)),
@@ -391,35 +421,115 @@ class LilaDataset:
 
         return adj_images_df
 
-
-    @retry(retry=(retry_if_exception_type(ClientError) |
-                  retry_if_exception_type(ServerError)),
+    @retry(retry=retry_if_exception(_retry_logic),
            wait=wait_exponential(multiplier=1, min=4, max=60),
            stop=stop_after_attempt(5),
-           before_sleep=_log_retry)
-    def _download_images(self, image_list: list[str]):
-        """Download images from GCS by file_name."""
-        self.img_out_dir.mkdir(parents=True, exist_ok=True)
+           before_sleep=_log_retry_transfer)
+    async def _transfer_single(
+        self,
+        file_name: str,
+        http_session: aiohttp.ClientSession,
+        gcs_client: GCSAsyncStorage,
+    ) -> bool:
+        """Download a single image from LILA and upload to our GCS bucket.
 
-        for image in tqdm(image_list, desc="Downloading LILA images"):
-            gcs_images_path = f"{self.gcs_prefix}/{image}"
-            output_path = self.img_out_dir / Path(image).name
+        Streams image bytes through memory — no local disk write.
 
-            if output_path.exists():
-                continue
+        Args:
+            file_name: LILA image path (e.g. "salmon_cv/frame_00123.jpg")
+            http_session: aiohttp session for LILA HTTPS downloads
+            gcs_client: async GCS client for uploads to our bucket
 
-            blob = self.bucket.blob(gcs_images_path)
-            blob.download_to_filename(str(output_path))
+        Returns:
+            True if transfer succeeded, False otherwise
+        """
+        try:
+            source_url = f"{self.LILA_BASE_URL}/{file_name}"
+
+            response = await http_session.get(source_url)
+            response.raise_for_status()
+            image_bytes = await response.read()
+
+            bucket_name = self._gcs_config.bucket
+            prefix = self._gcs_config.prefixes["object_detection"]
+            await gcs_client.upload(bucket_name, f"{prefix}/{file_name}", image_bytes)
+            return True
+
+        except aiohttp.ClientResponseError as e:
+            self.logger.warning(f"HTTP error for {file_name}: {e.status} {e.message}")
+            return False
+
+        except Exception as e:
+            self.logger.warning(f"Error transferring {file_name}: {e}")
+            return False
+
+    async def _transfer_with_tracking(
+        self,
+        file_name: str,
+        http_session: aiohttp.ClientSession,
+        gcs_client: GCSAsyncStorage,
+    ) -> None:
+        """Wraps _transfer_single with semaphore, progress tracking, and logging."""
+        async with self._semaphore:
+            success = await self._transfer_single(file_name, http_session, gcs_client)
+
+        if success:
+            self._tracker.record(file_name)
+            self._transferred += 1
+        else:
+            self._failed += 1
+
+        done = self._transferred + self._failed
+        if done % 1000 == 0:
+            self.logger.info(
+                f"Progress: {done:,} processed "
+                f"({self._transferred:,} OK, {self._failed:,} failed) | "
+                f"{self._tracker.completed_count:,}/{self._total:,} total complete"
+            )
+
+    async def _run_transfers(self, image_list: list[str]) -> None:
+        """Filter already-completed images and run async transfer loop."""
+        completed = self._tracker.load()
+        pending = [img for img in image_list if img not in completed]
+
+        self._total = len(image_list)
+
+        if not pending:
+            self.logger.info("All images already transferred — nothing to do")
+            return
+
+        self.logger.info(
+            f"Starting transfer of {len(pending):,} images "
+            f"({len(completed):,} already done) with concurrency={self._concurrency}"
+        )
+
+        try:
+            async with (
+                aiohttp.ClientSession() as http_session,
+                GCSAsyncStorage() as gcs_client,
+            ):
+                tasks = [
+                    self._transfer_with_tracking(file_name, http_session, gcs_client)
+                    for file_name in pending
+                ]
+                await asyncio.gather(*tasks)
+        finally:
+            self._tracker.close()
+
+        self.logger.info(
+            f"Transfer complete: {self._transferred:,} succeeded, "
+            f"{self._failed:,} failed"
+        )
 
     def extract_lila_images(self, total_images: int = 100_000):
-        """Full pipeline: download JSON → clean → sample → download images."""
+        """Full pipeline: download JSON → clean → sample → transfer images to GCS."""
         self._download_coco_json()
         images_df, annotations_df = self._load_and_clean()
 
         sampled = self.sample_balanced_dataset(images_df, total_images=total_images)
 
         image_list = sampled["file_name"].to_list()
-        self.logger.info(f"Downloading {len(image_list):,} images ...")
-        self._download_images(image_list)
+        self.logger.info(f"Transferring {len(image_list):,} images ...")
+        asyncio.run(self._run_transfers(image_list))
 
         return sampled, annotations_df
