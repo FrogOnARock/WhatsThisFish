@@ -25,6 +25,8 @@ from google.api_core.exceptions import ClientError, ServerError, ServiceUnavaila
 from gcloud.aio.storage import Storage as GCSAsyncStorage
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type, retry_if_exception
 
+from sqlalchemy.orm import sessionmaker
+
 from .photo_transfer import TransferProgressTracker, _retry_logic, _log_retry as _log_retry_transfer
 from ..config import _get_logger, GCSConfig
 
@@ -54,7 +56,8 @@ class LilaDataset:
     # LILA public GCS bucket served over HTTPS — no auth needed
     LILA_BASE_URL = "https://storage.googleapis.com/public-datasets-lila/community-fish-detection-dataset"
 
-    def __init__(self, gcs, data_path: str, gcs_config: GCSConfig, concurrency: int = 50):
+    def __init__(self, gcs, data_path: str, gcs_config: GCSConfig,
+                 session_factory: sessionmaker, concurrency: int = 50):
         self.gcs_client = gcs.get_gcs_client()
         self.logger = _get_logger("LilaDataset")
         self.ann_out_dir = Path(__file__).parents[2] / "data" / "metadata" / "lila"
@@ -62,11 +65,11 @@ class LilaDataset:
         self.gcs_prefix = "community-fish-detection-dataset"
         self.data_path = data_path
         self.bucket = self.gcs_client.bucket(self.gcs_bucket)
+        self._session_factory = session_factory
         self._tracker = TransferProgressTracker(
             data_path=self.data_path,
-            id_column="file_name",
-            parquet_path="lila_transfer_progress.parquet",
-            wal_path="lila_transfer_progress.wal.csv",
+            source="lila",
+            session_factory=session_factory,
         )
         self._gcs_config = gcs_config
         self._concurrency = concurrency

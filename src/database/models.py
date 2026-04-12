@@ -129,3 +129,30 @@ class SuccessfulUploads(Base):
         UniqueConstraint("identifier", "source", name="uq_identifier_source"),
         Index("ix_successful_uploads_source", "source"),
     )
+
+class FilteredObservationsView(Base):
+    """Read-only ORM mapping for the filtered_observations materialized view.
+
+    Created and refreshed via raw SQL in Alembic migrations — not managed
+    by Base.metadata.create_all(). The is_view info flag tells Alembic's
+    include_object hook to skip this during autogeneration.
+    """
+    __tablename__ = "filtered_observations_vw"
+
+    photo_uuid: Mapped[str] = mapped_column(String(36), primary_key=True)
+    photo_id: Mapped[int] = mapped_column(BigInteger)
+    observation_uuid: Mapped[str] = mapped_column(String(36))
+    observer_id: Mapped[int] = mapped_column(BigInteger)
+    latitude: Mapped[float | None] = mapped_column(Float)
+    longitude: Mapped[float | None] = mapped_column(Float)
+    taxon_id: Mapped[int] = mapped_column(BigInteger)
+    observed_on: Mapped[str | None] = mapped_column(Date)
+    extension: Mapped[str] = mapped_column(String(10))
+    license: Mapped[str] = mapped_column(String(20))
+    width: Mapped[int | None] = mapped_column(Integer)
+    height: Mapped[int | None] = mapped_column(Integer)
+    position: Mapped[int | None] = mapped_column(Integer)
+
+    __table_args__ = (
+        {"info": {"is_view": True}}
+    )
