@@ -7,18 +7,18 @@ All pipeline classes are mocked — we're testing routing logic, not pipelines.
 
 from unittest.mock import patch, MagicMock, AsyncMock
 import pytest
-from ..src.data.factory import DataFactory, Dataset
-from ..src.data.inaturalist_dataset import INaturalistDataset
-from ..src.data.download_lila import LilaDataset
-from ..src.data.photo_transfer import PhotoTransferPipeline
+from ..src.etl.factory import DataFactory, Dataset
+from ..src.etl.inaturalist_dataset import INaturalistDataset
+from ..src.etl.download_lila import LilaDataset
+from ..src.etl.photo_transfer import PhotoTransferPipeline
 
 
 @pytest.fixture
 def factory():
     """Create a DataFactory with all external dependencies mocked."""
-    with patch("whatsthatfish.src.data.factory.get_config") as mock_config, \
-         patch("whatsthatfish.src.data.factory.get_session_factory") as mock_sf, \
-         patch("whatsthatfish.src.data.factory.GCSClient"):
+    with patch("whatsthatfish.src.etl.factory.get_config") as mock_config, \
+         patch("whatsthatfish.src.etl.factory.get_session_factory") as mock_sf, \
+         patch("whatsthatfish.src.etl.factory.GCSClient"):
 
         mock_config.return_value = MagicMock()
         mock_sf.return_value = MagicMock()

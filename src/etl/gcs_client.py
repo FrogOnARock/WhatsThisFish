@@ -57,9 +57,9 @@ class GCSClient:
 
         """
         For a given bucket name and prefix, upload all files in the dataset_dir to the bucket.
-        :param dataset_dir: The directory containing the extracted image data.
+        :param dataset_dir: The directory containing the extracted image etl.
         :param bucket_name: The bucket on GCS we're uploading to.
-        :param prefix: The prefix to use to retrieve already uploaded data to ensure we don't overwrite.
+        :param prefix: The prefix to use to retrieve already uploaded etl to ensure we don't overwrite.
         :return: True if all files were uploaded successfully, False otherwise.
         """
 
@@ -79,7 +79,7 @@ class GCSClient:
         blob_list = storage_client.list_blobs(bucket_name, delimiter='/', prefix=prefix)
 
         existing_blobs = []
-        # Iterate and get blob data
+        # Iterate and get blob etl
         for blob in blob_list:
             existing_blobs.append(blob.name)
 

@@ -17,7 +17,6 @@ uv.lock
 /logs
 /src/notebooks
 *.json
-data/
 .claude/
 
 

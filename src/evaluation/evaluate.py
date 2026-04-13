@@ -73,7 +73,7 @@ def evaluate_cross_domain(model_path: str, data_yaml: str,
     Recommended holdout: Coralscapes, DeepFish, and one river dataset.
     """
     logger.info("Cross-domain evaluation on holdout sources: %s", holdout_sources)
-    # For cross-domain eval, we need a separate data YAML that only contains
+    # For cross-domain eval, we need a separate etl YAML that only contains
     # the held-out sources. This requires a pre-prepared split.
     # For now, run standard val and log for manual comparison.
     return evaluate_model(model_path, data_yaml, imgsz=imgsz)
@@ -83,7 +83,7 @@ def main():
     parser = argparse.ArgumentParser(description="Evaluate fish detection model")
     parser.add_argument("--model", type=str, required=True,
                         help="Path to model weights")
-    parser.add_argument("--data", type=str, required=True,
+    parser.add_argument("--etl", type=str, required=True,
                         help="Path to dataset YAML")
     parser.add_argument("--split", type=str, default="val",
                         help="Evaluation split (train/val/test)")

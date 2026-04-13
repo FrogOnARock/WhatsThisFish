@@ -39,11 +39,11 @@ class INaturalistDataset:
             **kwargs) -> str:
 
         """
-        Retrieves the data from AWS S3 bucket
-        :param bucket_name: refers to the bucket name we're retrieving data from (example: ml-inat-competition-datasets)
+        Retrieves the etl from AWS S3 bucket
+        :param bucket_name: refers to the bucket name we're retrieving etl from (example: ml-inat-competition-datasets)
         :param key: refers to the key or the dataset we're leveraging (example: 2021/val.json.tar.gz)
-        :param kwargs: any additional arguments for retrieving data from S3 bucket (ex., {"year", "type", etc.}
-        :return: returns the data from the S3 bucket
+        :param kwargs: any additional arguments for retrieving etl from S3 bucket (ex., {"year", "type", etc.}
+        :return: returns the etl from the S3 bucket
         """
 
         if os.path.exists(output_ext):
@@ -88,10 +88,10 @@ class INaturalistDataset:
             os.remove(output_raw)
 
     def retrieve_s3_data_by_bucket(self, data_path: str) -> None:
-        self.logger.info("Retrieving data from S3 bucket")
+        self.logger.info("Retrieving etl from S3 bucket")
         for key, value in self.s3_config.datasets.items():
             output_path = self.s3_config.output_paths[key]
-            self.logger.info(f"Retrieving data from S3 bucket for: {key}")
+            self.logger.info(f"Retrieving etl from S3 bucket for: {key}")
             path = str(data_path)
             self.retrieve_s3_data_by_blob(key=value, output_raw=path + "/" + value, output_ext=path + "/" + output_path)
             self.logger.info(f"Data retrieved from S3 bucket for: {key}")

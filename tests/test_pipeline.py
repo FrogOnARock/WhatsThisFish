@@ -12,7 +12,7 @@ from pathlib import Path
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
-from whatsthatfish.src.data.photo_transfer import TransferProgressTracker
+from whatsthatfish.src.etl.photo_transfer import TransferProgressTracker
 from whatsthatfish.src.database.base import Base
 from whatsthatfish.src.database.models import SuccessfulUploads
 

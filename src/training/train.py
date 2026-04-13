@@ -4,7 +4,7 @@ Main training entrypoint for fish detection.
 Three-stage transfer learning pipeline:
   Stage 1: COCO pretrained YOLO11l (automatic from base weights)
   Stage 2: Fish domain fine-tuning on LILA
-  Stage 3: Target domain adaptation (optional, user-provided data)
+  Stage 3: Target domain adaptation (optional, user-provided etl)
 """
 
 import argparse
@@ -43,7 +43,7 @@ def train_stage2(config: dict, data_yaml: str, resume: str | None = None):
 
     # Build training args from config, excluding non-ultralytics keys
     train_args = {
-        "data": data_yaml,
+        "etl": data_yaml,
         "epochs": config.get("epochs", 100),
         "imgsz": config.get("imgsz", 640),
         "batch": config.get("batch", -1),
@@ -92,7 +92,7 @@ def train_stage3(config: dict, data_yaml: str, base_model: str):
     model = YOLO(base_model)
 
     train_args = {
-        "data": data_yaml,
+        "etl": data_yaml,
         "epochs": config.get("finetune_epochs", 20),
         "imgsz": config.get("imgsz", 640),
         "batch": config.get("batch", -1),
@@ -116,7 +116,7 @@ def main():
     parser = argparse.ArgumentParser(description="Train fish detection model")
     parser.add_argument("--config", type=str, default="config/train_config.yaml",
                         help="Path to training config YAML")
-    parser.add_argument("--data", type=str, required=True,
+    parser.add_argument("--etl", type=str, required=True,
                         help="Path to dataset YAML (Ultralytics format)")
     parser.add_argument("--stage", type=int, default=2, choices=[2, 3],
                         help="Training stage (2=LILA fine-tune, 3=target domain)")

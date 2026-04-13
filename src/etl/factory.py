@@ -20,7 +20,7 @@ class DataFactory:
 
     def __init__(self):
         self.config = get_config()
-        self.data_path = Path(__file__).parents[2] / "data"
+        self.data_path = Path(__file__).parents[2] / "etl"
         self.logger = _get_logger("DataFactory")
         self.session_factory = get_session_factory()
         self.gcs = GCSClient(self.config.gcs)
@@ -49,13 +49,13 @@ class DataFactory:
         )
 
     def run(self, dataset: Dataset = Dataset.ALL, taxa: list[int] | None = None):
-        """Run the data pipeline for the specified dataset(s).
+        """Run the etl pipeline for the specified dataset(s).
 
         Args:
             dataset: Which pipeline(s) to run — all, classification (iNat), or detection (LILA)
             taxa: Override taxon IDs for iNat filtering (default: Actinopterygii + Chondrichthyes)
         """
-        self.logger.info(f"Starting data pipeline: {dataset.value}")
+        self.logger.info(f"Starting etl pipeline: {dataset.value}")
 
         if dataset in (Dataset.ALL, Dataset.CLASSIFICATION):
             self.logger.info("Running iNaturalist classification pipeline")

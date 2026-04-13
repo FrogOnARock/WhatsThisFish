@@ -131,7 +131,7 @@ def generate_lila_collected_images() -> pl.DataFrame:
     - Images WITHOUT annotations (negative frames — no fish detected)
     """
     rows = [
-        # ── salmon_cv: dominant source in real data ──
+        # ── salmon_cv: dominant source in real etl ──
         ("salmon_cv/frame_00100.jpg", "salmon_cv", True),
         ("salmon_cv/frame_00200.jpg", "salmon_cv", True),
         ("salmon_cv/frame_00300.jpg", "salmon_cv", False),  # val split

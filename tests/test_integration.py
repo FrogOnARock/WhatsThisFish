@@ -1,5 +1,5 @@
 """
-Integration tests for data pipelines against a real Postgres instance.
+Integration tests for etl pipelines against a real Postgres instance.
 
 Prerequisites:
     docker compose -f docker-compose.test.yml up -d
@@ -18,11 +18,11 @@ from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
 import os
 
-from whatsthatfish.src.data.download_lila import LilaDataset
-from whatsthatfish.src.data.gcs_client import GCSClient
+from whatsthatfish.src.etl.download_lila import LilaDataset
+from whatsthatfish.src.etl.gcs_client import GCSClient
 from whatsthatfish.src.database import LilaAnnotations
-from whatsthatfish.src.data.inaturalist_dataset import INaturalistDataset
-from whatsthatfish.src.data.photo_transfer import TransferProgressTracker, PhotoTransferPipeline
+from whatsthatfish.src.etl.inaturalist_dataset import INaturalistDataset
+from whatsthatfish.src.etl.photo_transfer import TransferProgressTracker, PhotoTransferPipeline
 from whatsthatfish.src.database.models import InatTaxa, InatFilteredObservations, SuccessfulUploads, LilaCollectedImages
 
 from whatsthatfish.tests.test_pipeline import tracker_dir
@@ -32,7 +32,7 @@ from whatsthatfish.tests.test_pipeline import tracker_dir
 
 
 def _build_inat_dataset(session_factory, fixtures_dir: Path) -> INaturalistDataset:
-    """Construct an INaturalistDataset pointed at fixture data."""
+    """Construct an INaturalistDataset pointed at fixture etl."""
 
     class FakeS3Config:
         bucket = "unused"
@@ -47,7 +47,7 @@ def _build_inat_dataset(session_factory, fixtures_dir: Path) -> INaturalistDatas
     return ds
 
 def _build_lila_dataset(session_factory, fixtures_dir: Path) -> LilaDataset:
-    """Construct an INaturalistDataset pointed at fixture data."""
+    """Construct an INaturalistDataset pointed at fixture etl."""
 
     class FakeGCSConfig:
         bucket = "unused"
