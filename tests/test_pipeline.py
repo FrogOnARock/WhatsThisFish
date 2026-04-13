@@ -76,7 +76,7 @@ class TestRecordingInat:
         tracker.record("2")
         tracker.record("3")
 
-        wal_path = tracker_dir / "inat_transfer_progress.wal.csv"
+        wal_path = tracker_dir / "inat_transfer_progress_wal.csv"
         assert wal_path.exists()
         df = pl.read_csv(wal_path, has_header=False)
         assert len(df) == 3
@@ -198,7 +198,7 @@ class TestCompactionDetails:
         tracker.record("1")
         tracker.record("2")
 
-        wal_path = tracker_dir / "inat_transfer_progress.wal.csv"
+        wal_path = tracker_dir / "inat_transfer_progress_wal.csv"
         assert wal_path.exists()
         assert wal_path.read_text() == ""
 
