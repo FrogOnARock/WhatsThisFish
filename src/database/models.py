@@ -23,7 +23,7 @@ class InatTaxa(Base):
     name: Mapped[str] = mapped_column(String(255))
     active: Mapped[bool] = mapped_column(Boolean, default=True)
 
-    observations: Mapped[list["InatObservation"]] = relationship(
+    filtered_observations: Mapped[list["InatFilteredObservations"]] = relationship(
         back_populates="taxon"
     )
 
@@ -33,54 +33,38 @@ class InatTaxa(Base):
     )
 
 
-class InatObservation(Base):
-    __tablename__ = "inat_observations"
+class InatFilteredObservations(Base):
+    """Pre-filtered iNaturalist photo records for model training.
 
-    observation_uuid: Mapped[str] = mapped_column(String(36), primary_key=True)
-    observer_id: Mapped[int | None] = mapped_column(BigInteger)
-    latitude: Mapped[float | None] = mapped_column(Float)
-    longitude: Mapped[float | None] = mapped_column(Float)
-    positional_accuracy: Mapped[int | None] = mapped_column(Integer)
-    taxon_id: Mapped[int | None] = mapped_column(
-        BigInteger, ForeignKey("inat_taxa.taxon_id")
-    )
-    quality_grade: Mapped[str | None] = mapped_column(String(20))
-    observed_on: Mapped[str | None] = mapped_column(Date)
-    anomaly_score: Mapped[float | None] = mapped_column(Float)
-
-    taxon: Mapped["InatTaxa | None"] = relationship(back_populates="observations")
-    photos: Mapped[list["InatPhoto"]] = relationship(back_populates="observation")
-
-    __table_args__ = (
-        Index("ix_inat_taxa_id_quality", "taxon_id", "quality_grade"),
-        Index("ix_nat_observed_on", "observed_on"),
-        Index("ix_nat_lat_long", "latitude", "longitude"),
-    )
-
-
-class InatPhoto(Base):
-    __tablename__ = "inat_photos"
+    Populated by lazy-scanning local parquets (taxa, observations, photos),
+    filtering to in-scope taxa (Actinopterygii + Chondrichthyes),
+    research-grade observations, and active taxa, then bulk inserting.
+    """
+    __tablename__ = "inat_filtered_observations"
 
     photo_uuid: Mapped[str] = mapped_column(String(36), primary_key=True)
-    photo_id: Mapped[int] = mapped_column(BigInteger, unique=True)
-    observation_uuid: Mapped[str | None] = mapped_column(
-        String(36), ForeignKey("inat_observations.observation_uuid")
-    )
-    observer_id: Mapped[int | None] = mapped_column(BigInteger)
-    extension: Mapped[str | None] = mapped_column(String(10))
-    license: Mapped[str | None] = mapped_column(String(20))
+    photo_id: Mapped[int] = mapped_column(BigInteger)
+    observation_uuid: Mapped[str] = mapped_column(String(36))
+    observer_id: Mapped[int] = mapped_column(BigInteger)
+    latitude: Mapped[float | None] = mapped_column(Float)
+    longitude: Mapped[float | None] = mapped_column(Float)
+    taxon_id: Mapped[int] = mapped_column(BigInteger,
+                                          ForeignKey("inat_taxa.taxon_id"))
+    observed_on: Mapped[str | None] = mapped_column(Date)
+    extension: Mapped[str] = mapped_column(String(10))
+    license: Mapped[str] = mapped_column(String(20))
     width: Mapped[int | None] = mapped_column(Integer)
     height: Mapped[int | None] = mapped_column(Integer)
     position: Mapped[int | None] = mapped_column(Integer)
 
-    observation: Mapped["InatObservation | None"] = relationship(
-        back_populates="photos"
-    )
+    taxon: Mapped["InatTaxa | None"] = relationship(back_populates="filtered_observations")
 
     __table_args__ = (
-        Index("ix_inat_photos_observation_uuid", "observation_uuid"),
-        Index("ix_inat_photos_photo_id", "photo_id"),
+        Index("ix_inat_filtered_observations_latitude_longitude", "latitude", "longitude"),
+        Index("ix_inat_filtered_observations_observed_on", "observed_on"),
+        Index("ix_inat_filtered_observations_taxon_id", "taxon_id"),
     )
+
 
 class LilaAnnotations(Base):
     __tablename__ = "lila_annotations"
@@ -116,7 +100,6 @@ class LilaCollectedImages(Base):
         Index("ix_lila_collected_images_dataset", "dataset")
     )
 
-
 class SuccessfulUploads(Base):
     __tablename__ = "successful_uploads"
 
@@ -130,29 +113,3 @@ class SuccessfulUploads(Base):
         Index("ix_successful_uploads_source", "source"),
     )
 
-class FilteredObservationsView(Base):
-    """Read-only ORM mapping for the filtered_observations materialized view.
-
-    Created and refreshed via raw SQL in Alembic migrations — not managed
-    by Base.metadata.create_all(). The is_view info flag tells Alembic's
-    include_object hook to skip this during autogeneration.
-    """
-    __tablename__ = "filtered_observations_vw"
-
-    photo_uuid: Mapped[str] = mapped_column(String(36), primary_key=True)
-    photo_id: Mapped[int] = mapped_column(BigInteger)
-    observation_uuid: Mapped[str] = mapped_column(String(36))
-    observer_id: Mapped[int] = mapped_column(BigInteger)
-    latitude: Mapped[float | None] = mapped_column(Float)
-    longitude: Mapped[float | None] = mapped_column(Float)
-    taxon_id: Mapped[int] = mapped_column(BigInteger)
-    observed_on: Mapped[str | None] = mapped_column(Date)
-    extension: Mapped[str] = mapped_column(String(10))
-    license: Mapped[str] = mapped_column(String(20))
-    width: Mapped[int | None] = mapped_column(Integer)
-    height: Mapped[int | None] = mapped_column(Integer)
-    position: Mapped[int | None] = mapped_column(Integer)
-
-    __table_args__ = (
-        {"info": {"is_view": True}}
-    )

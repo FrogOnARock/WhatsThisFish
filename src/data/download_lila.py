@@ -21,42 +21,22 @@ from pathlib import Path
 
 import aiohttp
 import polars as pl
-from google.api_core.exceptions import ClientError, ServerError, ServiceUnavailable, TooManyRequests, GoogleAPICallError
 from gcloud.aio.storage import Storage as GCSAsyncStorage
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type, retry_if_exception
-
+from sqlalchemy import select, insert
 from sqlalchemy.orm import sessionmaker
 
-from .photo_transfer import TransferProgressTracker, _retry_logic, _log_retry as _log_retry_transfer
+from .photo_transfer import TransferProgressTracker
 from ..config import _get_logger, GCSConfig
+from ..database.models import LilaCollectedImages, LilaAnnotations
+from ..retry import db_retry, gcs_retry, transfer_retry
 
-def _log_retry(retry_state):
-    logger = _get_logger("LilaDataset")
-    logger.warning(
-        f"Attempt {retry_state.attempt_number} failed: "
-        f"{retry_state.outcome.exception()}. "
-        f"Waiting {retry_state.next_action.sleep:.1f}s before retry."
-    )
-
-def _retry_logic(exc: BaseException) -> bool:
-    """Retry logic for aiohttp requests."""
-    if isinstance(exc, aiohttp.ClientResponseError):
-        return exc.status in (429, 500, 502, 503, 504)
-
-    if isinstance(exc, aiohttp.ClientConnectorError):
-        return True
-
-    if isinstance(exc, (ServiceUnavailable, TooManyRequests, GoogleAPICallError)):
-        return True
-
-    return False
 
 class LilaDataset:
 
     # LILA public GCS bucket served over HTTPS — no auth needed
     LILA_BASE_URL = "https://storage.googleapis.com/public-datasets-lila/community-fish-detection-dataset"
 
-    def __init__(self, gcs, data_path: str, gcs_config: GCSConfig,
+    def __init__(self, gcs, data_path: str, gcs_config,
                  session_factory: sessionmaker, concurrency: int = 50):
         self.gcs_client = gcs.get_gcs_client()
         self.logger = _get_logger("LilaDataset")
@@ -79,11 +59,7 @@ class LilaDataset:
         self._failed: int = 0
         self._total: int = 0
 
-    @retry(retry=(retry_if_exception_type(ClientError) |
-                  retry_if_exception_type(ServerError)),
-           wait=wait_exponential(multiplier=1, min=4, max=60),
-           stop=stop_after_attempt(5),
-           before_sleep=_log_retry)
+    @gcs_retry
     def _download_coco_json(self):
         """Download the COCO JSON annotation file from GCS."""
         json_path = self.ann_out_dir / "community_fish_detection_dataset.json"
@@ -154,7 +130,7 @@ class LilaDataset:
             hs.append(h)
 
         annotations_df = pl.DataFrame({
-            "ann_id": pl.Series(ann_ids, dtype=pl.Utf8),
+            "id": pl.Series(ann_ids, dtype=pl.Utf8),
             "image_id": pl.Series(img_ids, dtype=pl.Utf8),
             "category_id": pl.Series(cats, dtype=pl.Int64),
             "x": pl.Series(xs, dtype=pl.Float64),
@@ -424,10 +400,7 @@ class LilaDataset:
 
         return adj_images_df
 
-    @retry(retry=retry_if_exception(_retry_logic),
-           wait=wait_exponential(multiplier=1, min=4, max=60),
-           stop=stop_after_attempt(5),
-           before_sleep=_log_retry_transfer)
+    @transfer_retry
     async def _transfer_single(
         self,
         file_name: str,
@@ -524,6 +497,74 @@ class LilaDataset:
             f"{self._failed:,} failed"
         )
 
+    @db_retry
+    def _retrieve_annotations(self) -> set:
+        with self._session_factory() as session:
+            collected_ids = session.execute(
+                select(LilaAnnotations.id)).scalars().all()
+        return set(collected_ids)
+
+    @db_retry
+    def _load_annotations(self,
+                          annotations_df: pl.DataFrame,
+                          max_params: int = 65535) -> bool:
+        """Anti-join against existing annotations and bulk insert new rows."""
+        collected_ids = self._retrieve_annotations()
+        insert_df = annotations_df.filter(~pl.col("id").is_in(collected_ids))
+
+        if insert_df.height == 0:
+            self.logger.info("No new annotations to insert")
+            return True
+
+        inserted = 0
+        batch_size = max_params // len(insert_df.columns)
+        for batch_increment in range(0, insert_df.height, batch_size):
+            data_insert = insert_df.slice(batch_increment, batch_size).to_dicts()
+            with self._session_factory() as session:
+                session.execute(insert(LilaAnnotations), data_insert)
+                session.commit()
+            inserted += len(data_insert)
+            self.logger.info(f"Inserted {inserted:,}/{insert_df.height:,} annotations")
+ 
+        return True
+
+    @db_retry
+    def _retrieve_collected_images(self) -> set:
+        with self._session_factory() as session:
+            file_names = session.execute(
+                select(LilaCollectedImages.file_name)).scalars().all()
+        return set(file_names)
+
+    @db_retry
+    def _load_collected_images(self,
+                               sampled_df: pl.DataFrame,
+                               max_params: int = 65535) -> bool:
+        """Anti-join against existing images and bulk insert new rows."""
+        collected_images = self._retrieve_collected_images()
+        insert_df = (
+            sampled_df
+            .filter(~pl.col("file_name").is_in(collected_images))
+            .select(["file_name", "dataset", "is_train"])
+        )
+
+        if insert_df.height == 0:
+            self.logger.info("No new collected images to insert")
+            return True
+
+        self.logger.info(f"Inserting {insert_df.height:,} images into LILA Collected Images")
+
+        inserted = 0
+        batch_size = max_params // len(insert_df.columns)
+        for batch_increment in range(0, insert_df.height, batch_size):
+            data_insert = insert_df.slice(batch_increment, batch_size).to_dicts()
+            with self._session_factory() as session:
+                session.execute(insert(LilaCollectedImages), data_insert)
+                session.commit()
+            inserted += len(data_insert)
+            self.logger.info(f"Inserted {inserted:,}/{insert_df.height:,} collected images")
+
+        return True
+
     def extract_lila_images(self, total_images: int = 100_000):
         """Full pipeline: download JSON → clean → sample → transfer images to GCS."""
         self._download_coco_json()
@@ -535,4 +576,8 @@ class LilaDataset:
         self.logger.info(f"Transferring {len(image_list):,} images ...")
         asyncio.run(self._run_transfers(image_list))
 
-        return sampled, annotations_df
+        success_annotations = self._load_annotations(annotations_df)
+        success_collected_images = self._load_collected_images(sampled)
+
+        if success_annotations and success_collected_images:
+            self.logger.info("All meta data successfully transferred from LILA")

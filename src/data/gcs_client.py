@@ -1,20 +1,13 @@
 import os
+
+from dotenv import load_dotenv
 from google.cloud import storage as gcs
 from google.oauth2 import service_account
-from dotenv import load_dotenv
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
-from google.api_core.exceptions import ClientError, ServerError
+
 from ..config import _get_logger
+from ..retry import gcs_retry
+
 load_dotenv()
-
-
-def log_retry(retry_state):
-    logger = _get_logger("GCSClient")
-    logger.warning(
-        f"Attempt {retry_state.attempt_number} failed: "
-        f"{retry_state.outcome.exception()}. "
-        f"Waiting {retry_state.next_action.sleep:.1f}s before retry."
-    )
 
 
 class GCSClient:
@@ -25,11 +18,7 @@ class GCSClient:
         self.logger = _get_logger("GCSClient")
 
 
-    @retry(retry=(retry_if_exception_type(ClientError) |
-            retry_if_exception_type(ServerError)),
-           wait=wait_exponential(multiplier=1, min=4, max=60),
-           stop=stop_after_attempt(5),
-           retry_error_callback=log_retry)
+    @gcs_retry
     def get_gcs_client(self) -> gcs.Client:
         """
         Create an authenticated GCS client.

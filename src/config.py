@@ -19,7 +19,6 @@ class S3Config:
 class GCSConfig:
     bucket: str
     prefixes: dict[str, str]
-    confidence_threshold: float = 0.85
 
 
 @dataclass

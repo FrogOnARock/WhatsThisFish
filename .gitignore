@@ -18,6 +18,7 @@ uv.lock
 /src/notebooks
 *.json
 data/
+.claude/
 
 
 
