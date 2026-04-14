@@ -69,7 +69,7 @@ class InatFilteredObservations(Base):
 class LilaAnnotations(Base):
     __tablename__ = "lila_annotations"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    id: Mapped[str] = mapped_column(String(255), primary_key=True)
     image_id: Mapped[str] = mapped_column(String(255),
                                           ForeignKey("lila_collected_images.file_name"))
     category_id: Mapped[str] = mapped_column(String(255))

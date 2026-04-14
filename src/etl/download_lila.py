@@ -17,6 +17,7 @@ Pipeline:
 
 import asyncio
 import json
+import zipfile
 from pathlib import Path
 
 import aiohttp
@@ -68,11 +69,16 @@ class LilaDataset:
             return
 
         self.ann_out_dir.mkdir(parents=True, exist_ok=True)
+        zip_path = self.ann_out_dir / "community_fish_detection_dataset.json.zip"
         gcs_json_path = f"{self.gcs_prefix}/community_fish_detection_dataset.json.zip"
 
         self.logger.info("Downloading annotations from %s ...", gcs_json_path)
-        self.bucket.blob(gcs_json_path).download_to_filename(str(json_path))
-        self.logger.info("Downloaded annotations to %s", json_path)
+        self.bucket.blob(gcs_json_path).download_to_filename(str(zip_path))
+        self.logger.info("Extracting annotations zip ...")
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            zf.extractall(self.ann_out_dir)
+        zip_path.unlink()
+        self.logger.info("Extracted annotations to %s", json_path)
 
     def _load_and_clean(self) -> tuple[pl.DataFrame, pl.DataFrame]:
         """Load COCO JSON and return cleaned (images_df, annotations_df).
@@ -99,7 +105,7 @@ class LilaDataset:
         # which cause schema inference failures if included.
         images_raw = [
             {
-                "id": img["id"],
+                "id": str(img["id"]),
                 "file_name": img["file_name"],
                 "width": img["width"],
                 "height": img["height"],
@@ -139,10 +145,20 @@ class LilaDataset:
             "h": pl.Series(hs, dtype=pl.Float64),
         })
 
-        # Tag images: has_fish = True if image has at least one valid fish bbox
+        # Tag images: has_fish = True if image has at least one valid fish bbox.
+        # images_df["id"] and annotations_df["image_id"] are both Utf8 (str COCO IDs).
         positive_ids = annotations_df["image_id"].unique()
         images_df = images_df.with_columns(
             pl.col("id").is_in(positive_ids).alias("has_fish")
+        )
+
+        # Replace COCO integer image_id with file_name so that the FK to
+        # lila_collected_images.file_name is satisfied on DB insert.
+        annotations_df = (
+            annotations_df
+            .join(images_df.select(["id", "file_name"]), left_on="image_id", right_on="id", how="left")
+            .drop("image_id")
+            .rename({"file_name": "image_id"})
         )
 
         pos_count = images_df.filter(pl.col("has_fish")).height

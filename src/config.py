@@ -40,11 +40,11 @@ class AppConfig:
 # Singleton — loaded once, imported everywhere
 _config = None
 
-def get_config(path: str = "src/config/data_config.yaml") -> AppConfig:
+def get_config() -> AppConfig:
     global _config
     if _config is None:
-        path = os.getcwd() + "/" + path
-        _config = AppConfig.from_yaml(path)
+        path = Path(__file__).parent / "config" / "data_config.yaml"
+        _config = AppConfig.from_yaml(str(path))
     return _config
 
 def _get_logger(name: str):
