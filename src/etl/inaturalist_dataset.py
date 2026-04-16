@@ -165,6 +165,7 @@ class INaturalistDataset:
                 "extension", "license", "width", "height", "position",
                 "observer_id", "latitude", "longitude", "observed_on", "taxon_id",
             )
+            .unique("photo_uuid")
             .sink_parquet(output_path)
         )
 

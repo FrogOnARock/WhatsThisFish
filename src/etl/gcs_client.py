@@ -54,47 +54,45 @@ class GCSClient:
                    dataset_dir: str,
                    bucket_name: str,
                    prefix: str):
+        """Upload all files in dataset_dir to GCS, skipping those already present.
 
-        """
-        For a given bucket name and prefix, upload all files in the dataset_dir to the bucket.
-        :param dataset_dir: The directory containing the extracted image etl.
-        :param bucket_name: The bucket on GCS we're uploading to.
-        :param prefix: The prefix to use to retrieve already uploaded etl to ensure we don't overwrite.
-        :return: True if all files were uploaded successfully, False otherwise.
-        """
+        Args:
+            dataset_dir: The directory containing images to upload.
+            bucket_name: The GCS bucket to upload to.
+            prefix: The GCS prefix (e.g. "training/") used for both
+                    upload paths and listing existing blobs.
 
+        Returns:
+            (True, message) on success, (False, message) on failure.
+        """
         if not os.path.exists(dataset_dir):
             return False, "Dataset directory does not exist"
 
-
-        # Get all image files in the dataset_dir
         image_files = set(os.listdir(dataset_dir))
 
-
-        # Instantiate a GCS client
         storage_client = self.get_gcs_client()
-        bucket=storage_client.bucket(bucket_name)
+        bucket = storage_client.bucket(bucket_name)
 
-        # Get existing blobs in the bucket
-        blob_list = storage_client.list_blobs(bucket_name, delimiter='/', prefix=prefix)
+        # List existing blobs under this prefix — returns full paths like "prefix/image.jpg"
+        existing_blobs = {
+            blob.name
+            for blob in storage_client.list_blobs(bucket_name, prefix=prefix)
+        }
 
-        existing_blobs = []
-        # Iterate and get blob etl
-        for blob in blob_list:
-            existing_blobs.append(blob.name)
+        # Build the set of files that need uploading by comparing
+        # the prefixed blob name against what's already in the bucket
+        to_upload = [
+            image for image in image_files
+            if f"{prefix}/{image}" not in existing_blobs
+        ]
 
-        # If no blobs exist, upload all files, otherwise only upload new files
-        if len(existing_blobs) == 0:
-            for image in image_files:
-                blob = bucket.blob(f"{prefix}/{image}")
-                blob.upload_from_filename(os.path.join(dataset_dir, image))
-        else:
-            for image in image_files:
-                if image in existing_blobs:
-                    continue
-                else:
-                    print(f"Uploading {image} to bucket {bucket_name}")
-                    blob = bucket.blob(f"{prefix}/{image}")
-                    blob.upload_from_filename(os.path.join(dataset_dir, image))
+        self.logger.info(
+            f"Upload: {len(to_upload)} new, "
+            f"{len(image_files) - len(to_upload)} already present"
+        )
 
-        return True, "All files uploaded successfully"
+        for image in to_upload:
+            blob = bucket.blob(f"{prefix}/{image}")
+            blob.upload_from_filename(os.path.join(dataset_dir, image))
+
+        return True, f"Uploaded {len(to_upload)} files"

@@ -132,25 +132,25 @@ def generate_lila_collected_images() -> pl.DataFrame:
     """
     rows = [
         # ── salmon_cv: dominant source in real etl ──
-        ("salmon_cv/frame_00100.jpg", "salmon_cv", True),
-        ("salmon_cv/frame_00200.jpg", "salmon_cv", True),
-        ("salmon_cv/frame_00300.jpg", "salmon_cv", False),  # val split
+        ("salmon_cv/frame_00100.jpg", "JPEGImages/salmon_cv/frame_00100.jpg", "salmon_cv", True),
+        ("salmon_cv/frame_00200.jpg", "JPEGImages/salmon_cv/frame_00200.jpg", "salmon_cv", True),
+        ("salmon_cv/frame_00300.jpg", "JPEGImages/salmon_cv/frame_00300.jpg", "salmon_cv", False),  # val split
         # Negative frame — no annotations will reference this
-        ("salmon_cv/frame_00400.jpg", "salmon_cv", True),
+        ("salmon_cv/frame_00400.jpg", "JPEGImages/salmon_cv/frame_00400.jpg", "salmon_cv", True),
 
         # ── deep_fish: smaller source ──
-        ("deep_fish/img_0010.jpg", "deep_fish", True),
-        ("deep_fish/img_0020.jpg", "deep_fish", False),  # val split
+        ("deep_fish/img_0010.jpg", "JPEGImages/deep_fish/img_0010.jpg", "deep_fish", True),
+        ("deep_fish/img_0020.jpg", "JPEGImages/deep_fish/img_0020.jpg", "deep_fish", False),  # val split
 
         # ── brackish: another source ──
-        ("brackish/seq01_000100.jpg", "brackish", True),
-        ("brackish/seq01_000200.jpg", "brackish", True),
+        ("brackish/seq01_000100.jpg", "JPEGImages/brackish/seq01_000100.jpg", "brackish", True),
+        ("brackish/seq01_000200.jpg", "JPEGImages/brackish/seq01_000200.jpg", "brackish", True),
         # Negative frame
-        ("brackish/seq01_000300.jpg", "brackish", False),
+        ("brackish/seq01_000300.jpg", "JPEGImages/brackish/seq01_000300.jpg", "brackish", False),
     ]
     return pl.DataFrame(
         rows,
-        schema=["file_name", "dataset", "is_train"],
+        schema=["id", "file_name", "dataset", "is_train"],
         orient="row",
     )
 
@@ -167,27 +167,27 @@ def generate_lila_annotations() -> pl.DataFrame:
     """
     rows = [
         # salmon_cv/frame_00100: 2 annotations (school of fish)
-        (1, "salmon_cv/frame_00100.jpg", "1", 0.10, 0.20, 0.30, 0.25),
-        (2, "salmon_cv/frame_00100.jpg", "1", 0.55, 0.40, 0.20, 0.15),
+        ("1", "salmon_cv/frame_00100.jpg", "1", 0.10, 0.20, 0.30, 0.25),
+        ("2", "salmon_cv/frame_00100.jpg", "1", 0.55, 0.40, 0.20, 0.15),
 
         # salmon_cv/frame_00200: 1 annotation
-        (3, "salmon_cv/frame_00200.jpg", "1", 0.30, 0.35, 0.40, 0.30),
+        ("3", "salmon_cv/frame_00200.jpg", "1", 0.30, 0.35, 0.40, 0.30),
 
         # salmon_cv/frame_00300: 1 annotation (val split image)
-        (4, "salmon_cv/frame_00300.jpg", "1", 0.15, 0.10, 0.25, 0.20),
+        ("4", "salmon_cv/frame_00300.jpg", "1", 0.15, 0.10, 0.25, 0.20),
 
         # deep_fish/img_0010: 1 annotation
-        (5, "deep_fish/img_0010.jpg", "1", 0.45, 0.50, 0.35, 0.28),
+        ("5", "deep_fish/img_0010.jpg", "1", 0.45, 0.50, 0.35, 0.28),
 
         # deep_fish/img_0020: 2 annotations
-        (6, "deep_fish/img_0020.jpg", "1", 0.05, 0.15, 0.20, 0.18),
-        (7, "deep_fish/img_0020.jpg", "2", 0.60, 0.55, 0.15, 0.12),  # different category
+        ("6", "deep_fish/img_0020.jpg", "1", 0.05, 0.15, 0.20, 0.18),
+        ("7", "deep_fish/img_0020.jpg", "2", 0.60, 0.55, 0.15, 0.12),  # different category
 
         # brackish/seq01_000100: 1 annotation
-        (8, "brackish/seq01_000100.jpg", "1", 0.25, 0.30, 0.30, 0.22),
+        ("8", "brackish/seq01_000100.jpg", "1", 0.25, 0.30, 0.30, 0.22),
 
         # brackish/seq01_000200: 1 annotation
-        (9, "brackish/seq01_000200.jpg", "1", 0.40, 0.45, 0.25, 0.20),
+        ("9", "brackish/seq01_000200.jpg", "1", 0.40, 0.45, 0.25, 0.20),
 
         # No annotations for salmon_cv/frame_00400 (negative)
         # No annotations for brackish/seq01_000300 (negative)
@@ -196,7 +196,7 @@ def generate_lila_annotations() -> pl.DataFrame:
         rows,
         schema=["id", "image_id", "category_id", "x", "y", "w", "h"],
         orient="row",
-    ).cast({"id": pl.Int64, "x": pl.Float64, "y": pl.Float64, "w": pl.Float64, "h": pl.Float64})
+    ).cast({"x": pl.Float64, "y": pl.Float64, "w": pl.Float64, "h": pl.Float64})
 
 
 def main():

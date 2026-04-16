@@ -20,7 +20,7 @@ class DataFactory:
 
     def __init__(self):
         self.config = get_config()
-        self.data_path = Path(__file__).parents[2] / "etl"
+        self.data_path = Path(__file__).parents[1] / "data" / "etl"
         self.logger = _get_logger("DataFactory")
         self.session_factory = get_session_factory()
         self.gcs = GCSClient(self.config.gcs)

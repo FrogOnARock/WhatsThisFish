@@ -339,7 +339,7 @@ class TestLilaFKConstraint:
         lila_ds = _build_lila_dataset(session_factory, fixtures_dir)
         annotations_df = pl.read_parquet(fixtures_dir / "annotations.parquet")
 
-        # Annotations reference image_id → collected_images.file_name
+        # Annotations reference image_id → collected_images.id
         # With no images in the DB, Postgres should reject the insert
         with pytest.raises(IntegrityError):
             lila_ds._load_annotations(annotations_df)
@@ -400,13 +400,13 @@ class TestLilaFKConstraint:
             # These two images are negative frames — no annotations reference them
             neg_frame_1 = session.execute(
                 select(LilaCollectedImages)
-                .where(LilaCollectedImages.file_name == "salmon_cv/frame_00400.jpg")
+                .where(LilaCollectedImages.id == "salmon_cv/frame_00400.jpg")
             ).scalar_one()
             assert len(neg_frame_1.annotations) == 0
 
             neg_frame_2 = session.execute(
                 select(LilaCollectedImages)
-                .where(LilaCollectedImages.file_name == "brackish/seq01_000300.jpg")
+                .where(LilaCollectedImages.id == "brackish/seq01_000300.jpg")
             ).scalar_one()
             assert len(neg_frame_2.annotations) == 0
 

@@ -3,7 +3,7 @@
 # iNaturalist S3 Buckets ADD SCHEMA
 s3:
   base_url: https://inaturalist-open-data.s3.amazonaws.com/photos
-  bucket: inaturalist-open-etl
+  bucket: inaturalist-open-data
   datasets:
     observations: observations.csv.gz
     photos: photos.csv.gz

@@ -17,6 +17,7 @@ Pipeline:
 
 import asyncio
 import json
+import zipfile
 from pathlib import Path
 
 import aiohttp
@@ -40,7 +41,7 @@ class LilaDataset:
                  session_factory: sessionmaker, concurrency: int = 50):
         self.gcs_client = gcs.get_gcs_client()
         self.logger = _get_logger("LilaDataset")
-        self.ann_out_dir = Path(__file__).parents[2] / "etl" / "metadata" / "lila"
+        self.ann_out_dir = Path(__file__).parents[1] / "data" / "etl" / "metadata" / "lila"
         self.gcs_bucket = "public-datasets-lila"
         self.gcs_prefix = "community-fish-detection-dataset"
         self.data_path = data_path
@@ -69,10 +70,27 @@ class LilaDataset:
 
         self.ann_out_dir.mkdir(parents=True, exist_ok=True)
         gcs_json_path = f"{self.gcs_prefix}/community_fish_detection_dataset.json.zip"
+        zip_path = self.ann_out_dir / "community_fish_detection_dataset.json.zip"
 
         self.logger.info("Downloading annotations from %s ...", gcs_json_path)
-        self.bucket.blob(gcs_json_path).download_to_filename(str(json_path))
-        self.logger.info("Downloaded annotations to %s", json_path)
+        self.bucket.blob(gcs_json_path).download_to_filename(str(zip_path))
+
+        self.logger.info("Extracting %s ...", zip_path)
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            zf.extractall(self.ann_out_dir)
+        zip_path.unlink()
+
+        if not json_path.exists():
+            # The zip may contain a differently-named file — find it
+            extracted = list(self.ann_out_dir.glob("*.json"))
+            if extracted:
+                extracted[0].rename(json_path)
+            else:
+                raise FileNotFoundError(
+                    f"No .json file found after extracting {gcs_json_path}"
+                )
+
+        self.logger.info("Extracted annotations to %s", json_path)
 
     def _load_and_clean(self) -> tuple[pl.DataFrame, pl.DataFrame]:
         """Load COCO JSON and return cleaned (images_df, annotations_df).
@@ -123,7 +141,7 @@ class LilaDataset:
                 continue
             ann_ids.append(str(ann["id"]))
             img_ids.append(str(ann["image_id"]))
-            cats.append(ann["category_id"])
+            cats.append(str(ann["category_id"]))
             xs.append(x)
             ys.append(y)
             ws.append(w)
@@ -132,7 +150,7 @@ class LilaDataset:
         annotations_df = pl.DataFrame({
             "id": pl.Series(ann_ids, dtype=pl.Utf8),
             "image_id": pl.Series(img_ids, dtype=pl.Utf8),
-            "category_id": pl.Series(cats, dtype=pl.Int64),
+            "category_id": pl.Series(cats, dtype=pl.Utf8),
             "x": pl.Series(xs, dtype=pl.Float64),
             "y": pl.Series(ys, dtype=pl.Float64),
             "w": pl.Series(ws, dtype=pl.Float64),
@@ -280,7 +298,7 @@ class LilaDataset:
             f"({pos_count:,} pos, {neg_count:,} neg)"
         )
 
-        max_pos_images = total_images / 2
+        max_pos_images = total_images // 2
         ids_in_sample = set(adj_images_df["id"].to_list())
 
         while pos_count != neg_count:
@@ -410,6 +428,8 @@ class LilaDataset:
         """Download a single image from LILA and upload to our GCS bucket.
 
         Streams image bytes through memory — no local disk write.
+        Retryable errors (429/5xx, connector, GCS transient) propagate to
+        @transfer_retry. Permanent failures (404, etc.) return False.
 
         Args:
             file_name: LILA image path (e.g. "salmon_cv/frame_00123.jpg")
@@ -417,27 +437,24 @@ class LilaDataset:
             gcs_client: async GCS client for uploads to our bucket
 
         Returns:
-            True if transfer succeeded, False otherwise
+            True if transfer succeeded, False for permanent failures
         """
-        try:
-            source_url = f"{self.LILA_BASE_URL}/{file_name}"
+        source_url = f"{self.LILA_BASE_URL}/{file_name}"
 
-            response = await http_session.get(source_url)
-            response.raise_for_status()
-            image_bytes = await response.read()
+        response = await http_session.get(source_url)
 
-            bucket_name = self._gcs_config.bucket
-            prefix = self._gcs_config.prefixes["object_detection"]
-            await gcs_client.upload(bucket_name, f"{prefix}/{file_name}", image_bytes)
-            return True
-
-        except aiohttp.ClientResponseError as e:
-            self.logger.warning(f"HTTP error for {file_name}: {e.status} {e.message}")
+        # Permanent HTTP failures — no point retrying
+        if response.status == 404:
+            self.logger.warning(f"Not found (404): {file_name}")
             return False
 
-        except Exception as e:
-            self.logger.warning(f"Error transferring {file_name}: {e}")
-            return False
+        response.raise_for_status()
+        image_bytes = await response.read()
+
+        bucket_name = self._gcs_config.bucket
+        prefix = self._gcs_config.prefixes["gcs_object_detection"]
+        await gcs_client.upload(bucket_name, f"{prefix}/{file_name}", image_bytes)
+        return True
 
     async def _transfer_with_tracking(
         self,
@@ -446,8 +463,12 @@ class LilaDataset:
         gcs_client: GCSAsyncStorage,
     ) -> None:
         """Wraps _transfer_single with semaphore, progress tracking, and logging."""
-        async with self._semaphore:
-            success = await self._transfer_single(file_name, http_session, gcs_client)
+        try:
+            async with self._semaphore:
+                success = await self._transfer_single(file_name, http_session, gcs_client)
+        except Exception as e:
+            self.logger.warning(f"Transfer failed after retries for {file_name}: {e}")
+            success = False
 
         if success:
             self._tracker.record(file_name)
@@ -531,9 +552,9 @@ class LilaDataset:
     @db_retry
     def _retrieve_collected_images(self) -> set:
         with self._session_factory() as session:
-            file_names = session.execute(
-                select(LilaCollectedImages.file_name)).scalars().all()
-        return set(file_names)
+            ids = session.execute(
+                select(LilaCollectedImages.id)).scalars().all()
+        return set(ids)
 
     @db_retry
     def _load_collected_images(self,
@@ -543,8 +564,8 @@ class LilaDataset:
         collected_images = self._retrieve_collected_images()
         insert_df = (
             sampled_df
-            .filter(~pl.col("file_name").is_in(collected_images))
-            .select(["file_name", "dataset", "is_train"])
+            .filter(~pl.col("id").is_in(collected_images))
+            .select(["id", "file_name", "dataset", "is_train"])
         )
 
         if insert_df.height == 0:
@@ -576,8 +597,14 @@ class LilaDataset:
         self.logger.info(f"Transferring {len(image_list):,} images ...")
         asyncio.run(self._run_transfers(image_list))
 
-        success_annotations = self._load_annotations(annotations_df)
         success_collected_images = self._load_collected_images(sampled)
 
-        if success_annotations and success_collected_images:
+        # Filter annotations to only those referencing sampled images
+        sampled_ids = set(sampled["id"].to_list())
+        sampled_annotations = annotations_df.filter(
+            pl.col("image_id").is_in(sampled_ids)
+        )
+        success_annotations = self._load_annotations(sampled_annotations)
+
+        if success_collected_images and success_annotations:
             self.logger.info("All meta etl successfully transferred from LILA")

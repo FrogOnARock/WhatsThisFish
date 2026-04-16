@@ -28,8 +28,8 @@ class InatTaxa(Base):
     )
 
     __table_args__ = (
-        Index("ix_inat_rank_level", "rank_level"),
-        Index("ix_inat_ancestry_active", "ancestry", "active"),
+        Index("ix_inat_taxa_rank_level", "rank_level"),
+        Index("ix_inat_taxa_ancestry_active", "ancestry", "active"),
     )
 
 
@@ -69,9 +69,9 @@ class InatFilteredObservations(Base):
 class LilaAnnotations(Base):
     __tablename__ = "lila_annotations"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    id: Mapped[str] = mapped_column(String(255), primary_key=True)
     image_id: Mapped[str] = mapped_column(String(255),
-                                          ForeignKey("lila_collected_images.file_name"))
+                                          ForeignKey("lila_collected_images.id"))
     category_id: Mapped[str] = mapped_column(String(255))
     x: Mapped[float] = mapped_column(Float)
     y: Mapped[float] = mapped_column(Float)
@@ -89,7 +89,8 @@ class LilaAnnotations(Base):
 class LilaCollectedImages(Base):
     __tablename__ = "lila_collected_images"
 
-    file_name: Mapped[str] = mapped_column(String(255), primary_key=True)
+    id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    file_name: Mapped[str] = mapped_column(String(255), unique=True)
     dataset: Mapped[str] = mapped_column(String(255))
     is_train: Mapped[bool] = mapped_column(Boolean)
 
