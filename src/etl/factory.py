@@ -76,7 +76,7 @@ class DataFactory:
 
 def main():
     factory = DataFactory()
-    factory.run(dataset=Dataset.ALL)
+    factory.run(dataset=Dataset.DETECTION)
 
 
 if __name__ == "__main__":

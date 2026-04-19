@@ -6,8 +6,9 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
-    String, func, DateTime
+    String, func, DateTime, JSON
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql.schema import UniqueConstraint
 from whatsthatfish.src.database.base import Base
@@ -93,6 +94,8 @@ class LilaCollectedImages(Base):
     file_name: Mapped[str] = mapped_column(String(255), unique=True)
     dataset: Mapped[str] = mapped_column(String(255))
     is_train: Mapped[bool] = mapped_column(Boolean)
+    width: Mapped[int] = mapped_column(Integer)
+    height: Mapped[int] = mapped_column(Integer)
 
     annotations: Mapped[list["LilaAnnotations"]] = relationship(back_populates="collected_images")
 
@@ -100,6 +103,19 @@ class LilaCollectedImages(Base):
         Index("ix_lila_collected_images_file_name", "file_name"),
         Index("ix_lila_collected_images_dataset", "dataset")
     )
+
+
+class LilaYolo(Base):
+    __tablename__ = "lila_yolo"
+
+    file_name: Mapped[str] = mapped_column(String(255), primary_key=True)
+    annotation: Mapped[dict[str, float]] = mapped_column(JSONB)
+
+    __table_args__ = (
+        Index("ix_lila_yolo_file_name", "file_name"),
+    )
+
+
 
 class SuccessfulUploads(Base):
     __tablename__ = "successful_uploads"

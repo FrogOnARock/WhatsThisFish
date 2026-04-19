@@ -565,7 +565,7 @@ class LilaDataset:
         insert_df = (
             sampled_df
             .filter(~pl.col("id").is_in(collected_images))
-            .select(["id", "file_name", "dataset", "is_train"])
+            .select(["id", "file_name", "dataset", "is_train", "width", "height"])
         )
 
         if insert_df.height == 0:

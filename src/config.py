@@ -20,6 +20,9 @@ class GCSConfig:
     bucket: str
     prefixes: dict[str, str]
 
+@dataclass
+class YoloConfig:
+    data_paths: dict[str, str]
 
 @dataclass
 class AppConfig:
@@ -36,9 +39,23 @@ class AppConfig:
             gcs=GCSConfig(**raw["gcs"]),
         )
 
+@dataclass
+class ModelConfig:
+    yolo: YoloConfig
+
+    @classmethod
+    def from_yaml(cls, path: str = "config/yolo_conifg.yaml") -> "ModelConfig":
+        with open(path) as f:
+            raw = yaml.safe_load(f)
+
+        return cls(
+            yolo=YoloConfig(**raw["yolo_config"]),
+        )
+
 
 # Singleton — loaded once, imported everywhere
 _config = None
+_model_config = None
 
 def get_config(path: str | None = None) -> AppConfig:
     global _config
@@ -47,6 +64,15 @@ def get_config(path: str | None = None) -> AppConfig:
             path = str(Path(__file__).parent / "config" / "data_config.yaml")
         _config = AppConfig.from_yaml(path)
     return _config
+
+
+def get_model_config(path: str | None = None) -> ModelConfig:
+    global _model_config
+    if _model_config is None:
+        if path is None:
+            path = str(Path(__file__).parent / "config" / "yolo_conifg.yaml")
+        _model_config = ModelConfig.from_yaml(path)
+    return _model_config
 
 def _get_logger(name: str):
     """

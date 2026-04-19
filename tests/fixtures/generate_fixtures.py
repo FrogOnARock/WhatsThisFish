@@ -132,25 +132,25 @@ def generate_lila_collected_images() -> pl.DataFrame:
     """
     rows = [
         # ── salmon_cv: dominant source in real etl ──
-        ("salmon_cv/frame_00100.jpg", "JPEGImages/salmon_cv/frame_00100.jpg", "salmon_cv", True),
-        ("salmon_cv/frame_00200.jpg", "JPEGImages/salmon_cv/frame_00200.jpg", "salmon_cv", True),
-        ("salmon_cv/frame_00300.jpg", "JPEGImages/salmon_cv/frame_00300.jpg", "salmon_cv", False),  # val split
+        ("salmon_cv/frame_00100.jpg", "JPEGImages/salmon_cv/frame_00100.jpg", "salmon_cv", True, 720, 720),
+        ("salmon_cv/frame_00200.jpg", "JPEGImages/salmon_cv/frame_00200.jpg", "salmon_cv", True, 720, 720),
+        ("salmon_cv/frame_00300.jpg", "JPEGImages/salmon_cv/frame_00300.jpg", "salmon_cv", False, 800, 1000),  # val split
         # Negative frame — no annotations will reference this
-        ("salmon_cv/frame_00400.jpg", "JPEGImages/salmon_cv/frame_00400.jpg", "salmon_cv", True),
+        ("salmon_cv/frame_00400.jpg", "JPEGImages/salmon_cv/frame_00400.jpg", "salmon_cv", True, 720, 720),
 
         # ── deep_fish: smaller source ──
-        ("deep_fish/img_0010.jpg", "JPEGImages/deep_fish/img_0010.jpg", "deep_fish", True),
-        ("deep_fish/img_0020.jpg", "JPEGImages/deep_fish/img_0020.jpg", "deep_fish", False),  # val split
+        ("deep_fish/img_0010.jpg", "JPEGImages/deep_fish/img_0010.jpg", "deep_fish", True, 720, 720),
+        ("deep_fish/img_0020.jpg", "JPEGImages/deep_fish/img_0020.jpg", "deep_fish", False, 720, 720),  # val split
 
         # ── brackish: another source ──
-        ("brackish/seq01_000100.jpg", "JPEGImages/brackish/seq01_000100.jpg", "brackish", True),
-        ("brackish/seq01_000200.jpg", "JPEGImages/brackish/seq01_000200.jpg", "brackish", True),
+        ("brackish/seq01_000100.jpg", "JPEGImages/brackish/seq01_000100.jpg", "brackish", True, 720, 720),
+        ("brackish/seq01_000200.jpg", "JPEGImages/brackish/seq01_000200.jpg", "brackish", True, 720, 720),
         # Negative frame
-        ("brackish/seq01_000300.jpg", "JPEGImages/brackish/seq01_000300.jpg", "brackish", False),
+        ("brackish/seq01_000300.jpg", "JPEGImages/brackish/seq01_000300.jpg", "brackish", False, 720, 720),
     ]
     return pl.DataFrame(
         rows,
-        schema=["id", "file_name", "dataset", "is_train"],
+        schema=["id", "file_name", "dataset", "is_train", "width", "height"],
         orient="row",
     )
 
