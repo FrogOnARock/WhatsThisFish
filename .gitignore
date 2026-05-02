@@ -18,6 +18,6 @@ uv.lock
 /src/notebooks
 *.json
 .claude/
-
+/src/preprocessing/images/
 
 
