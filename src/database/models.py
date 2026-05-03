@@ -133,7 +133,8 @@ class InatCaptureContext(Base):
     mean_r: Mapped[float | None] = mapped_column(Float)
     mean_g: Mapped[float | None] = mapped_column(Float)
     mean_b: Mapped[float | None] = mapped_column(Float)
-    is_underwater: Mapped[bool | None] = mapped_column(Boolean)
+    stddev: Mapped[float | None] = mapped_column(Float)
+    is_underwater: Mapped[int | None] = mapped_column(Integer)
 
     __table_args__ = (
         Index("ix_inat_capture_context_is_underwater", "is_underwater"),

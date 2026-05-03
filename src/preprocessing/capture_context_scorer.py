@@ -33,61 +33,71 @@ import numpy as np
 # Anything under 0.015 has been denoted above water, while between 0.15 and 0.25 considered ambiguous, while anything
 # above 0.25 is considered underwater
 
-STD_CHROM: float = 0.015
 
 
-def compute_channel_means(img_bgr: np.ndarray) -> tuple[float, float, float]:
-    """Per-channel pixel-mean of a BGR image.
+class ContextScorer:
+    def __init__(self):
+        self._std_chrom: float = 0.015
 
-    Returns (mean_r, mean_g, mean_b) in conventional R-G-B order — note the
-    index swap, since OpenCV's native layout is BGR. Means are computed in
-    float64 to avoid uint8 overflow on the sum.
-    """
-    img = img_bgr.astype(np.float64)
-    return (
-        float(img[..., 2].mean()),  # R — BGR index 2
-        float(img[..., 1].mean()),  # G — BGR index 1
-        float(img[..., 0].mean()),  # B — BGR index 0
-    )
+    @staticmethod
+    def compute_channel_means(img_bgr: np.ndarray) -> tuple[float, float, float]:
+        """Per-channel pixel-mean of a BGR image.
+    
+        Returns (mean_r, mean_g, mean_b) in conventional R-G-B order — note the
+        index swap, since OpenCV's native layout is BGR. Means are computed in
+        float64 to avoid uint8 overflow on the sum.
+        """
+        img = img_bgr.astype(np.float64)
+        return (
+            float(img[..., 2].mean()),  # R — BGR index 2
+            float(img[..., 1].mean()),  # G — BGR index 1
+            float(img[..., 0].mean()),  # B — BGR index 0
+        )
+    
+    
+    def classify_underwater(
+        self,
+        mean_r: float,
+        mean_g: float,
+        mean_b: float,
+    ) -> int:
+        """
+        Combined channel standard deviation metric to determine what images
+        are confidently above water
+        """
+    
+        total = mean_r + mean_g + mean_b
+        if total == 0:
+            return 0  # or surface as unscoreable to the caller
+    
+        red_chrom = mean_r / total
+        blue_chrom = mean_b / total
+        green_chrom = mean_g / total
+        std_dev = np.std([red_chrom, blue_chrom, green_chrom])
+    
+        if std_dev < self._std_chrom:
+            return 0
+        elif std_dev < 0.25:
+            return 1
+        else:
+            return 2
+    
+    
+    def score_capture_context(
+        self,
+        image_bytes: bytes,
+    ) -> ValueError | tuple[float, float, float, int]:
+        """Composite scorer: per-channel means plus underwater verdict.
+    
+        Returns (mean_r, mean_g, mean_b, is_underwater). The means are stored
+        in the DB alongside the verdict so the threshold/rule can be retuned
+        later without re-scoring images.
+        """
+        arr = np.frombuffer(image_bytes, dtype=np.float64)
+        img_bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if img_bgr is None:
+            return ValueError("Failed to decode image")
 
-
-def classify_underwater(
-    mean_r: float,
-    mean_g: float,
-    mean_b: float,
-    std_threshold: float = STD_CHROM
-) -> int:
-    """
-    Combined channel standard deviation metric to determine what images
-    are confidently above water
-    """
-
-    total = mean_r + mean_g + mean_b
-    if total == 0:
-        return 0  # or surface as unscoreable to the caller
-
-    red_chrom = mean_r / total
-    blue_chrom = mean_b / total
-    green_chrom = mean_g / total
-    std_dev = np.std([red_chrom, blue_chrom, green_chrom])
-
-    if std_dev < std_threshold:
-        return 0
-    elif std_dev < 0.25:
-        return 1
-    else:
-        return 2
-
-
-def score_capture_context(
-    img_bgr: np.ndarray,
-) -> tuple[float, float, float, int]:
-    """Composite scorer: per-channel means plus underwater verdict.
-
-    Returns (mean_r, mean_g, mean_b, is_underwater). The means are stored
-    in the DB alongside the verdict so the threshold/rule can be retuned
-    later without re-scoring images.
-    """
-    mean_r, mean_g, mean_b = compute_channel_means(img_bgr)
-    classification = classify_underwater(mean_r, mean_g, mean_b)
-    return mean_r, mean_g, mean_b, classification
+        mean_r, mean_g, mean_b = self.compute_channel_means(img_bgr)
+        classification = self.classify_underwater(mean_r, mean_g, mean_b)
+        return mean_r, mean_g, mean_b, classification

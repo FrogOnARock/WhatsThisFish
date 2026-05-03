@@ -191,14 +191,19 @@ class QualityScorer:
 
     def compute_uiqm(
             self,
-            img_bgr: np.ndarray,
-        ) -> tuple[float, float, float, float]:
+            image_bytes: bytes,
+        ) -> ValueError | tuple[float, float, float, float]:
         """Composite UIQM and its three sub-scores.
 
         Returns (uicm, uism, uiconm, uiqm). Sub-scores are returned
         alongside the composite so downstream consumers can re-weight
         without re-scoring.
         """
+        arr = np.frombuffer(image_bytes, dtype=np.float64)
+        img_bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if img_bgr is None:
+            return ValueError("Failed to decode image")
+
         uicm = self.compute_uicm(img_bgr)
         uism = self.compute_uism(img_bgr)
         uiconm = self.compute_uiconm(img_bgr)
