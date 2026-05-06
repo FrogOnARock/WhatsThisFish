@@ -19,5 +19,5 @@ uv.lock
 *.json
 .claude/
 /src/preprocessing/images/
-
+/src/preprocessing/notebooks/images.txt
 
