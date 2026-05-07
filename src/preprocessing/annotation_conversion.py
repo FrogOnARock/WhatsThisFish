@@ -1,16 +1,14 @@
 import os
-from sqlalchemy import select, insert
-import polars as pl
-from sqlalchemy.orm import sessionmaker
-from src.retry import db_retry
-from src.database.models import LilaAnnotations, LilaCollectedImages
-from pathlib import Path
-from src.database.models import LilaYolo
-from src.config import _get_logger
-from src.database.config import get_session_factory
-from dotenv import load_dotenv
-from src.config import get_model_config
 from enum import Enum
+from pathlib import Path
+from sqlalchemy import select, insert
+from sqlalchemy.orm import sessionmaker
+import polars as pl
+from dotenv import load_dotenv
+from ..retry import db_retry
+from ..database.models import LilaAnnotations, LilaCollectedImages, LilaYolo
+from ..config import _get_logger, get_model_config
+from ..database.config import get_session_factory
 
 load_dotenv()
 logger = _get_logger("AnnotationConverter")

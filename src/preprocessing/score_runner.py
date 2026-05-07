@@ -80,7 +80,7 @@ class ScoringProgressTracker:
                 reader = csv.DictReader(f)
                 for row in reader:
                     if row:
-                        self._completed.add(row.get("photo_uuid"))
+                        self._completed.add(row.get(self._pk))
                         self._wal_buffer.append(dict(row))
                         wal_count += 1
             if wal_count:
@@ -88,6 +88,8 @@ class ScoringProgressTracker:
 
         self._wal_file = open(self._wal_path, "a", newline="")
         self._wal_writer = csv.DictWriter(self._wal_file, self._dest_table.__table__.columns.keys())
+        if self._wal_path.stat().st_size == 0:
+            self._wal_writer.writeheader()
 
         logger.info(f"Total completed transfers: {len(self._completed):,}")
         return self._completed
@@ -95,8 +97,8 @@ class ScoringProgressTracker:
     def record(self, row: dict[str, str]) -> None:
         """Record a successful transfer — appends to WAL immediately."""
 
-        photo_uuid = row.get("photo_uuid")
-        self._completed.add(photo_uuid)
+        ident = row.get(self._pk)
+        self._completed.add(ident)
         self._wal_writer.writerow(row)
         self._wal_file.flush()
         self._wal_buffer.append(row)
@@ -105,9 +107,6 @@ class ScoringProgressTracker:
         if self._since_last_compact >= self._compact_every:
             self.compact()
 
-    def _return_session(self):
-        return self._session_factory()
-
     @db_retry
     def compact(self) -> None:
         """Bulk insert WAL entries to Postgres and truncate WAL."""
@@ -115,50 +114,50 @@ class ScoringProgressTracker:
         if not self._wal_buffer:
             return
 
-        session = self._return_session()
-        if self._source == 'inat_context':
-            stmt = insert(InatCaptureContext).values(self._wal_buffer)
-            stmt = stmt.on_conflict_do_update(
-                index_elements=[InatCaptureContext.photo_uuid],
-                set_={
-                    "mean_r": stmt.excluded.mean_r,
-                    "mean_g": stmt.excluded.mean_g,
-                    "mean_b": stmt.excluded.mean_b,
-                    "is_underwater": stmt.excluded.is_underwater,
-                    "stddev": stmt.excluded.stddev
-                }
-            )
-            session.execute(stmt)
-            session.commit()
+        with self._session_factory() as session:
+            if self._source == 'inat_context':
+                stmt = insert(InatCaptureContext).values(self._wal_buffer)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=[InatCaptureContext.photo_uuid],
+                    set_={
+                        "mean_r": stmt.excluded.mean_r,
+                        "mean_g": stmt.excluded.mean_g,
+                        "mean_b": stmt.excluded.mean_b,
+                        "is_underwater": stmt.excluded.is_underwater,
+                        "stddev": stmt.excluded.stddev
+                    }
+                )
+                session.execute(stmt)
+                session.commit()
 
 
-        elif self._source == 'inat_scoring':
-            stmt = insert(InatImageQuality).values(self._wal_buffer)
-            stmt = stmt.on_conflict_do_update(
-                index_elements=[InatImageQuality.photo_uuid],
-                set_={
-                    "uicm": stmt.excluded.uicm,
-                    "uism": stmt.excluded.uism,
-                    "uiconm": stmt.excluded.uiconm,
-                    "uiqm": stmt.excluded.uiqm
-                }
-            )
-            session.execute(stmt)
-            session.commit()
+            elif self._source == 'inat_scoring':
+                stmt = insert(InatImageQuality).values(self._wal_buffer)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=[InatImageQuality.photo_uuid],
+                    set_={
+                        "uicm": stmt.excluded.uicm,
+                        "uism": stmt.excluded.uism,
+                        "uiconm": stmt.excluded.uiconm,
+                        "uiqm": stmt.excluded.uiqm
+                    }
+                )
+                session.execute(stmt)
+                session.commit()
 
-        else:
-            stmt = insert(LilaImageQuality).values(self._wal_buffer)
-            stmt = stmt.on_conflict_do_update(
-                index_elements=[LilaImageQuality.file_name],
-                set_={
-                    "uicm": stmt.excluded.uicm,
-                    "uism": stmt.excluded.uism,
-                    "uiconm": stmt.excluded.uiconm,
-                    "uiqm": stmt.excluded.uiqm
-                }
-            )
-            session.execute(stmt)
-            session.commit()
+            else:
+                stmt = insert(LilaImageQuality).values(self._wal_buffer)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=[LilaImageQuality.file_name],
+                    set_={
+                        "uicm": stmt.excluded.uicm,
+                        "uism": stmt.excluded.uism,
+                        "uiconm": stmt.excluded.uiconm,
+                        "uiqm": stmt.excluded.uiqm
+                    }
+                )
+                session.execute(stmt)
+                session.commit()
 
 
         self._wal_buffer.clear()
@@ -167,6 +166,7 @@ class ScoringProgressTracker:
         self._wal_file.close()
         self._wal_file = open(self._wal_path, "w", newline="")
         self._wal_writer = csv.DictWriter(self._wal_file, self._dest_table.__table__.columns.keys())
+        self._wal_writer.writeheader()
         self._since_last_compact = 0
 
         logger.info(f"Compacted {len(self._completed):,} entries to DB")
@@ -183,6 +183,98 @@ class ScoringProgressTracker:
 
     def is_completed(self, identifier: str) -> bool:
         return str(identifier) in self._completed
+
+
+
+class ContextRunner:
+    def __init__(self, gcs_config: GCSConfig,
+                 session: sessionmaker,
+                 progress_tracker: ScoringProgressTracker,
+                 dataset: str,
+                 concurrency: int = 50):
+
+        self._dataset = dataset
+        self._gcs_config = gcs_config
+        self._session_factory = session
+        self._progress_tracker = progress_tracker
+        self._semaphore = asyncio.Semaphore(concurrency)
+        self.context_scorer = ContextScorer()
+        self.quality_scorer = QualityScorer()
+
+    async def _get_blob(self, path: str, file_name: str, gcs_storage: GCSAsyncStorage) -> bytes:
+        return await gcs_storage.download(self._gcs_config.bucket, path + file_name)
+
+    @gcs_retry
+    async def _context_with_tracking(self, row: dict[str, str], gcs_storage: GCSAsyncStorage):
+        async with self._semaphore:
+
+            identifier = row.get("filename")
+            path = self._gcs_config.prefixes.get("gcs_train")
+
+            blob = await self._get_blob(path, identifier, gcs_storage)
+            mean_r, mean_g, mean_b, stddev, classification = self.context_scorer.score_capture_context(blob)
+
+            context_dict = {
+                "photo_uuid": row.get("photo_uuid"),
+                "mean_r": mean_r,
+                "mean_g": mean_g,
+                "mean_b": mean_b,
+                "stddev": stddev,
+                "is_underwater": classification
+            }
+
+            self._progress_tracker.record(context_dict)
+
+    @db_retry
+    def _select_all_uploads(self):
+        with self._session_factory() as session:
+            ids = session.execute(
+                select(InatImageQuality.photo_uuid).where(InatImageQuality.uiqm > 0)
+            ).scalars().all()
+
+            return set(ids)
+
+    @db_retry
+    def _select_files(self, photo_uuid) -> ValueError | list[dict[str, Any]]:
+
+
+        with self._session_factory() as session:
+            rows = session.execute(
+                select(InatFilteredObservations.photo_uuid, func.concat(
+                    InatFilteredObservations.photo_id, ".", InatFilteredObservations.extension
+                ).label("filename")
+               ).where(InatFilteredObservations.photo_uuid.in_(photo_uuid))
+            ).all()
+
+            return [{"photo_uuid": r.photo_uuid, "filename": r.filename} for r in rows]
+
+    async def run(self):
+
+
+        """
+        Need to ensure that files
+        """
+
+        files = self._select_all_uploads()
+        ids = set(self._progress_tracker.load())
+        files_to_process = files - ids
+        rows = self._select_files(files_to_process)
+
+        try:
+            async with (
+                GCSAsyncStorage() as gcs_storage
+            ):
+
+                context = [
+                    self._context_with_tracking(row, gcs_storage)
+                    for row in rows
+                ] if self._dataset == "inat" else []
+
+                await asyncio.gather(*context)
+
+
+        finally:
+            self._progress_tracker.close()
 
 
 
@@ -208,12 +300,12 @@ class ScoreRunner:
     def _get_blob_details(self, row) -> ValueError | tuple[str, str]:
 
         if self._dataset == 'inat':
-            identifier = row.get("photo_uuid")
+            identifier = row.get("filename")
             path = self._gcs_config.prefixes.get("gcs_train")
             return identifier, path
 
         elif self._dataset == 'lila':
-            identifier = row.get("file_name")
+            identifier = row.get("filename")
             path = self._gcs_config.prefixes.get("gcs_object_detection")
             return identifier, path
 
@@ -228,89 +320,82 @@ class ScoreRunner:
             blob = await self._get_blob(path, identifier, gcs_storage)
             uicm, uism, uiconm, uiqm = self.quality_scorer.compute_uiqm(blob)
 
-            score_dict = {
-                "photo_uuid": identifier,
-                "uicm": uicm,
-                "uism": uism,
-                "uiconm": uiconm,
-                "uiqm": uiqm
-            }
+
+
+
+            if self._dataset == "inat":
+                score_dict = {
+                    "photo_uuid": row.get("photo_uuid"),
+                    "uicm": uicm,
+                    "uism": uism,
+                    "uiconm": uiconm,
+                    "uiqm": uiqm
+                }
+            else:
+                score_dict = {
+                    "file_name": row.get("filename"),
+                    "uicm": uicm,
+                    "uism": uism,
+                    "uiconm": uiconm,
+                    "uiqm": uiqm
+                }
+
 
             self._progress_tracker.record(score_dict)
 
-    @gcs_retry
-    async def _context_with_tracking(self, row: dict[str, str],  gcs_storage: GCSAsyncStorage):
-        async with self._semaphore:
-
-            identifier, path = self._get_blob_details(row)
-            blob = await self._get_blob(path, identifier, gcs_storage)
-            mean_r, mean_g, mean_b, stddev, classification = self.context_scorer.score_capture_context(blob)
-
-            context_dict = {
-                "photo_uuid": identifier,
-                "mean_r": mean_r,
-                "mean_g": mean_g,
-                "mean_b": mean_b,
-                "stddev": stddev,
-                "is_underwater": classification
-            }
-
-            self._progress_tracker.record(context_dict)
-
     @db_retry
-    def _select_files(self, files):
+    def _select_files(self, files) -> ValueError | list[dict[str, Any]]:
+        with self._session_factory() as session:
+            rows = session.execute(
+                select(InatFilteredObservations.photo_uuid, InatFilteredObservations.photo_id, func.concat(
+                    InatFilteredObservations.photo_id, ".", InatFilteredObservations.extension
+                ).label("filename")
+                       ).where(InatFilteredObservations.photo_id.in_(files))
+            ).all()
 
-        if self._dataset == "inat":
+            return [{"photo_uuid": r.photo_uuid, "filename": r.filename, "photo_id": r.photo_id} for r in rows]
 
-            with self._session_factory() as session:
-                rows = session.execute(
-                    select(InatFilteredObservations.photo_uuid, func.concat(
-                        InatFilteredObservations.photo_id, ".", InatFilteredObservations.extension
-                    ).label("filename")
-                   ).where(InatFilteredObservations.photo_id.in_(files))
-                ).all()
-
-                return [{"photo_uuid": r.photo_uuid, "filename": r.filename} for r in rows]
-
-        elif self._dataset == "lila":
-            pass
-
-        return NotImplementedError
-
-    def _select_all_uploads(self):
-        session_factory = get_session_factory()
-        with session_factory() as session:
+    def _select_all_uploads(self, dataset: str) -> set[str]:
+        with self._session_factory() as session:
             ids = session.execute(
-                select(SuccessfulUploads.identifier).where(SuccessfulUploads.source == self._dataset)
+                select(SuccessfulUploads.identifier).where(SuccessfulUploads.source == dataset)
             ).scalars().all()
             return set(ids)
 
-    async def runner(self):
+    async def run(self):
 
 
         """
         Need to ensure that files
         """
 
-        files = self._select_all_uploads()
+        ## For LILA this is returning the file name, for iNat it is returning the photo ID, so we can get the difference in the set
+        ## without first retrieving the actual relevant PK from InatFilteredObservations
+        files = self._select_all_uploads(self._dataset)
         ids = set(self._progress_tracker.load())
-        files_to_process = files - ids
-        rows = self._select_files(files_to_process)
+
+        if self._dataset == "inat":
+            rows = self._select_files(files)
+            rows = [r for r in rows if r.get("photo_uuid") not in ids]
+        else:
+            files_to_process = files - ids
+            rows = [{"filename": file} for file in files_to_process]
 
         try:
             async with (
                 GCSAsyncStorage() as gcs_storage
             ):
-                tasks = [
+
+                scoring = [
                     self._scoring_with_tracking(row, gcs_storage)
                     for row in rows
                 ]
 
-                await asyncio.gather(*tasks)
+                await asyncio.gather(*scoring)
+
 
         finally:
             self._progress_tracker.close()
-
 
 
 

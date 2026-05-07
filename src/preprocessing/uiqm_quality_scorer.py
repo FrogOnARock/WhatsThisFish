@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import cv2
 import numpy as np
-import numpy.ma as ma
 
 
 class QualityScorer:
@@ -158,7 +157,7 @@ class QualityScorer:
         eme_g = self._channel_eme(edge_weighted(g))
         eme_b = self._channel_eme(edge_weighted(b))
 
-        return float(LUM_R * eme_r + LUM_G * eme_g + LUM_B * eme_b)
+        return float(self.LUM_R * eme_r + self.LUM_G * eme_g + self.LUM_B * eme_b)
 
 
     def compute_uiconm(self, img_bgr: np.ndarray) -> float:
@@ -170,13 +169,13 @@ class QualityScorer:
 
         """
         gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY).astype(np.float64)
-        blocks = self._block_view(gray, self.BLOCK_SIZE)
+        blocks = self._block_view(gray)
 
         bmax = blocks.max(axis=(-2, -1)).astype(np.float64)
         bmin = blocks.min(axis=(-2, -1)).astype(np.float64)
         n_blocks = blocks.shape[0] * blocks.shape[1]
 
-        if not blocks.any() > 0:
+        if not (blocks > 0).any():
             return 0.0
 
         valid = bmin > 0
@@ -199,7 +198,7 @@ class QualityScorer:
         alongside the composite so downstream consumers can re-weight
         without re-scoring.
         """
-        arr = np.frombuffer(image_bytes, dtype=np.float64)
+        arr = np.frombuffer(image_bytes, dtype=np.uint8)
         img_bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
         if img_bgr is None:
             return ValueError("Failed to decode image")

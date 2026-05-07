@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import cv2
 import numpy as np
+from typing import Any
 
 # Please review image_rgb.ipynb for experimentation to understand the threshold set for standard deviation
 # of the red, green, blue chromaticity
@@ -60,7 +61,7 @@ class ContextScorer:
         mean_r: float,
         mean_g: float,
         mean_b: float,
-    ) -> int:
+    ) -> tuple[int, Any]:
         """
         Combined channel standard deviation metric to determine what images
         are confidently above water
@@ -68,7 +69,7 @@ class ContextScorer:
     
         total = mean_r + mean_g + mean_b
         if total == 0:
-            return 0  # or surface as unscoreable to the caller
+            return 0, 0.0  # or surface as unscoreable to the caller
     
         red_chrom = mean_r / total
         blue_chrom = mean_b / total
@@ -76,28 +77,28 @@ class ContextScorer:
         std_dev = np.std([red_chrom, blue_chrom, green_chrom])
     
         if std_dev < self._std_chrom:
-            return 0
+            return 0, std_dev
         elif std_dev < 0.25:
-            return 1
+            return 1, std_dev
         else:
-            return 2
+            return 2, std_dev
     
     
     def score_capture_context(
         self,
         image_bytes: bytes,
-    ) -> ValueError | tuple[float, float, float, int]:
+    ) -> ValueError | tuple[float, float, float, Any, int]:
         """Composite scorer: per-channel means plus underwater verdict.
     
         Returns (mean_r, mean_g, mean_b, is_underwater). The means are stored
         in the DB alongside the verdict so the threshold/rule can be retuned
         later without re-scoring images.
         """
-        arr = np.frombuffer(image_bytes, dtype=np.float64)
+        arr = np.frombuffer(image_bytes, dtype=np.uint8)
         img_bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
         if img_bgr is None:
             return ValueError("Failed to decode image")
 
         mean_r, mean_g, mean_b = self.compute_channel_means(img_bgr)
-        classification = self.classify_underwater(mean_r, mean_g, mean_b)
-        return mean_r, mean_g, mean_b, classification
+        classification, stddev = self.classify_underwater(mean_r, mean_g, mean_b)
+        return mean_r, mean_g, mean_b, stddev, classification
