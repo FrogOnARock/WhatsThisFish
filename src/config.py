@@ -44,7 +44,7 @@ class ModelConfig:
     yolo: YoloConfig
 
     @classmethod
-    def from_yaml(cls, path: str = "config/yolo_conifg.yaml") -> "ModelConfig":
+    def from_yaml(cls, path: str = "config/yolo_config.yaml") -> "ModelConfig":
         with open(path) as f:
             raw = yaml.safe_load(f)
 
@@ -70,7 +70,7 @@ def get_model_config(path: str | None = None) -> ModelConfig:
     global _model_config
     if _model_config is None:
         if path is None:
-            path = str(Path(__file__).parent / "config" / "yolo_conifg.yaml")
+            path = str(Path(__file__).parent / "config" / "yolo_config.yaml")
         _model_config = ModelConfig.from_yaml(path)
     return _model_config
 

@@ -14,7 +14,7 @@ from ..database.config import get_session_factory
 
 from ..config import _get_logger, GCSConfig
 from ..database.models import InatImageQuality, InatCaptureContext, InatFilteredObservations, LilaImageQuality, SuccessfulUploads
-from whatsthatfish.src.database.base import Base
+from ..database.base import Base
 from ..retry import transfer_retry, db_retry, gcs_retry
 from .capture_context_scorer import ContextScorer
 from .uiqm_quality_scorer import QualityScorer

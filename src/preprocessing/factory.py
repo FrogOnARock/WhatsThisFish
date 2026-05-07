@@ -11,8 +11,9 @@ from ..database.models import InatCaptureContext, InatImageQuality, LilaImageQua
 from ..database import get_session_factory
 from ..config import get_config
 from ..etl.gcs_client import GCSClient
+from dotenv import load_dotenv
 
-
+load_dotenv()
 @dataclass
 class Dataset(str, Enum):
     ALL = "all"
@@ -104,4 +105,4 @@ class PreProcessingFactory:
 
 
 if __name__ == '__main__':
-    asyncio.run(PreProcessingFactory(type=Dataset.ALL).run())
+    asyncio.run(PreProcessingFactory(type=Dataset.ANN_CONV).run())

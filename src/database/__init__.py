@@ -1,12 +1,12 @@
-from whatsthatfish.src.database.base import Base
-from whatsthatfish.src.database.config import (
+from .base import Base
+from .config import (
     get_async_engine,
     get_async_session_factory,
     get_database_url,
     get_engine,
     get_session_factory,
 )
-from whatsthatfish.src.database.models import (  # noqa: F401 — registers all mappers with Base.metadata
+from .models import (  # noqa: F401 — registers all mappers with Base.metadata
     InatTaxa,
     InatFilteredObservations,
     LilaAnnotations,

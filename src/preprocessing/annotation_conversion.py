@@ -80,9 +80,8 @@ class AnnotationConverter:
         bbox_cols = ["class_id", "norm_center_x", "norm_center_y", "norm_width", "norm_height", "is_train"]
         grouped = (
             df.with_columns(
-                pl.when(
-                ~(pl.col("category_id") == 1)).then(pl.lit(1))
-                .otherwise(pl.lit(0)).alias("class_id"))
+                pl.when(pl.col("category_id").is_not_null()).then(pl.lit(0))
+                .otherwise(pl.lit(1)).alias("class_id"))
             .group_by("file_name")
             .agg(pl.struct(bbox_cols).alias("annotation"))
         )
