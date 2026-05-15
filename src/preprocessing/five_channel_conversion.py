@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 import torch
 from PIL import Image
-from lcn_gradient_map import gradient_map, local_contrast_normalization
+from .lcn_gradient_map import gradient_map, local_contrast_normalization
 
 class AddMultiChannel:
     """Torchvision-compatible transform: PIL Image -> (5, H, W) float32 tensor.

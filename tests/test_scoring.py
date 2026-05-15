@@ -28,7 +28,7 @@ from whatsthatfish.src.database.models import (
     InatImageQuality,
     InatTaxa,
     LilaCollectedImages,
-    LilaImageQuality,
+    LilaImageQuality, InatClipContext,
 )
 from whatsthatfish.src.preprocessing.capture_context_scorer import ContextScorer
 from whatsthatfish.src.preprocessing.factory import Dataset, PreProcessingFactory
@@ -719,7 +719,7 @@ class TestPreProcessingFactoryRouting:
 
     def test_dest_table_context_inat_returns_capture_context(self, factory_mocks):
         factory = PreProcessingFactory(type=Dataset.ALL)
-        assert factory._dest_table("inat", runner="context") is InatCaptureContext
+        assert factory._dest_table("inat", runner="context") is InatClipContext
 
     def test_dest_table_lila_always_returns_lila_quality(self, factory_mocks):
         factory = PreProcessingFactory(type=Dataset.ALL)
@@ -738,7 +738,7 @@ class TestPreProcessingFactoryRouting:
         self, mock_tracker, mock_runner, factory_mocks
     ):
         mock_runner.return_value.run = AsyncMock()
-        factory = PreProcessingFactory(type=Dataset.CONTEXT)
+        factory = PreProcessingFactory(type=Dataset.CONTEXT_ORIG)
         await factory.run()
         assert mock_runner.call_count == 1
 
@@ -755,17 +755,18 @@ class TestPreProcessingFactoryRouting:
 
     @pytest.mark.asyncio
     @patch("whatsthatfish.src.preprocessing.factory.AnnotationConverter")
-    @patch("whatsthatfish.src.preprocessing.factory.ScoreRunner")
-    @patch("whatsthatfish.src.preprocessing.factory.ContextRunner")
     @patch("whatsthatfish.src.preprocessing.factory.ScoringProgressTracker")
+    @patch("whatsthatfish.src.preprocessing.factory.ScoreRunner")
+    @patch("whatsthatfish.src.preprocessing.factory.ClipModel")
     async def test_all_type_runs_every_pipeline(
-        self, mock_tracker, mock_ctx, mock_score, mock_ann, factory_mocks
+        self, mock_clip, mock_score, mock_tracker, mock_ann, factory_mocks
     ):
-        mock_ctx.return_value.run = AsyncMock()
+        mock_clip.return_value.run = AsyncMock()
         mock_score.return_value.run = AsyncMock()
+        mock_tracker.return_value.run = AsyncMock()
         mock_ann.return_value.run = MagicMock()
         factory = PreProcessingFactory(type=Dataset.ALL)
         await factory.run()
-        assert mock_ctx.call_count == 1
         assert mock_score.call_count == 2
+        assert mock_clip.call_count == 1
         mock_ann.return_value.run.assert_called_once()

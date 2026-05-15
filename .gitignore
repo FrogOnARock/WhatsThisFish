@@ -21,3 +21,4 @@ uv.lock
 /src/preprocessing/images/
 /src/preprocessing/notebooks/images.txt
 /src/data/
+/runs

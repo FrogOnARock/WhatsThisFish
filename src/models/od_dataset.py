@@ -1,10 +1,14 @@
 import io
 import os
+
+import numpy as np
 from torch.utils.data import Dataset
 from sqlalchemy import select
 from PIL import Image
 from google.cloud import storage
 import torch
+from torchvision.transforms import v2
+from torchvision.tv_tensors import BoundingBoxes, BoundingBoxFormat
 
 from ..database.models import LilaImageQuality, LilaYolo
 from ..config import get_config
@@ -12,24 +16,49 @@ from ..database.config import get_session_factory
 from ..retry import transfer_retry
 
 
+_bucket = None
+
+def init_gcs_worker(worker_id):
+    global _bucket
+    config = get_config().gcs
+    client = storage.Client.from_service_account_json(os.environ.get("GCS_SECRET"))
+    _bucket = client.bucket(config.bucket)
+
+
 class ObjectDetectionDataset(Dataset):
 
-    def __init__(self, split: str = "train", transforms = None):
+    def __init__(self, split: str = "train", transforms=None, max_samples: int = None):
         self.session = get_session_factory()
         self.session_factory = self.session()
         self.gcs_config = get_config().gcs
         self.gcs_prefix = self.gcs_config.prefixes.get("gcs_object_detection")
-        self._gcs_bucket = None
-
         self.split = True if split == "train" else False
         self.transform = transforms
 
-        self.data = self.session_factory.execute(
+        query = (
             select(LilaImageQuality.file_name, LilaImageQuality.uiqm, LilaYolo.annotation)
             .join(LilaYolo, LilaImageQuality.file_name == LilaYolo.file_name)
             .where(LilaYolo.annotation[0]["is_train"].as_boolean() == self.split)
-        ).all()
+        )
+        if max_samples is not None:
+            query = query.limit(max_samples)
 
+        self.data = self.session_factory.execute(query).all()
+
+    @property
+    def labels(self):
+        return [
+                {
+                    "bboxes": np.array([
+                        [ann["norm_center_x"], ann["norm_center_y"], ann["norm_width"], ann["norm_height"]]
+                        if ann["class_id"] == 0
+                        else [0, 0, 0, 0]
+                        for ann in record.annotation
+                    ]),
+                    "cls": np.array([ann["class_id"] for ann in record.annotation])
+                }
+                for record in self.data
+            ]
 
     def __len__(self):
         return len(self.data)
@@ -37,10 +66,6 @@ class ObjectDetectionDataset(Dataset):
 
     @transfer_retry
     def __getitem__(self, idx):
-
-        if self._gcs_bucket is None:
-            client = storage.Client.from_service_account_json(os.environ.get("GCS_SECRET"))
-            self._gcs_storage = client.bucket(self.gcs_config.bucket)
 
         record = self.data[idx]
         labels = [
@@ -57,8 +82,19 @@ class ObjectDetectionDataset(Dataset):
         label_tensor = torch.zeros((0, 5), dtype=torch.float32) if not labels else torch.tensor(labels, dtype=torch.float32)
 
         filename = record.file_name
-        blob = self._gcs_bucket.blob(self.gcs_prefix + filename)
+        blob = _bucket.blob(self.gcs_prefix + "/" + filename)
         image = blob.download_as_bytes()
-        image_tensor = self.transform(Image.open(io.BytesIO(image)))
 
-        return image_tensor, label_tensor
+        H, W = 640, 640
+        abs_boxes = label_tensor[:, 1:5] * torch.tensor([H, W, H, W])
+
+        boxes = BoundingBoxes(
+            abs_boxes,
+            format=BoundingBoxFormat.CXCYWH, canvas_size=(640, 640)
+        )
+
+        image_tensor, boxes = self.transform(Image.open(io.BytesIO(image)).convert("RGB"), boxes)
+        norm_boxes = boxes / torch.tensor([H, W, H, W])
+        label_tensor = torch.cat([label_tensor[:, 0:1], norm_boxes], dim=1)
+
+        return image_tensor, label_tensor, filename

@@ -27,7 +27,10 @@ def tracker_dir(tmp_path: Path) -> Path:
 def session_factory():
     """Create an in-memory SQLite engine with the successful_uploads table."""
     engine = create_engine("sqlite:///:memory:")
-    Base.metadata.create_all(engine)
+    _SQLITE_TABLES = [
+        SuccessfulUploads.__table__,
+    ]
+    Base.metadata.create_all(engine, tables=_SQLITE_TABLES)
     return sessionmaker(bind=engine)
 
 
