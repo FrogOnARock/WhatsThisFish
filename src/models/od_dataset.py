@@ -5,24 +5,13 @@ import numpy as np
 from torch.utils.data import Dataset
 from sqlalchemy import select
 from PIL import Image
-from google.cloud import storage
 import torch
-from torchvision.transforms import v2
 from torchvision.tv_tensors import BoundingBoxes, BoundingBoxFormat
 
 from ..database.models import LilaImageQuality, LilaYolo
-from ..config import get_config
+from ..config import get_config, _bucket
 from ..database.config import get_session_factory
 from ..retry import transfer_retry
-
-
-_bucket = None
-
-def init_gcs_worker(worker_id):
-    global _bucket
-    config = get_config().gcs
-    client = storage.Client.from_service_account_json(os.environ.get("GCS_SECRET"))
-    _bucket = client.bucket(config.bucket)
 
 
 class ObjectDetectionDataset(Dataset):
@@ -83,18 +72,18 @@ class ObjectDetectionDataset(Dataset):
 
         filename = record.file_name
         blob = _bucket.blob(self.gcs_prefix + "/" + filename)
-        image = blob.download_as_bytes()
+        image_pil = Image.open(io.BytesIO(blob.download_as_bytes())).convert("RGB")
+        W_img, H_img = image_pil.size  # PIL size is (W, H)
 
-        H, W = 640, 640
-        abs_boxes = label_tensor[:, 1:5] * torch.tensor([H, W, H, W])
-
+        abs_boxes = label_tensor[:, 1:5] * torch.tensor([W_img, H_img, W_img, H_img])
         boxes = BoundingBoxes(
             abs_boxes,
-            format=BoundingBoxFormat.CXCYWH, canvas_size=(640, 640)
+            format=BoundingBoxFormat.CXCYWH, canvas_size=(H_img, W_img)
         )
 
-        image_tensor, boxes = self.transform(Image.open(io.BytesIO(image)).convert("RGB"), boxes)
-        norm_boxes = boxes / torch.tensor([H, W, H, W])
+        image_tensor, boxes = self.transform(image_pil, boxes)
+        H_out, W_out = image_tensor.shape[-2], image_tensor.shape[-1]
+        norm_boxes = boxes / torch.tensor([W_out, H_out, W_out, H_out])
         label_tensor = torch.cat([label_tensor[:, 0:1], norm_boxes], dim=1)
 
         return image_tensor, label_tensor, filename

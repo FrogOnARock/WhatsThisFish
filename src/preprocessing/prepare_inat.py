@@ -302,4 +302,5 @@ class InatPreparation:
         rows = self.retrieve_sampled()
         ancestry_incl_rows = [self.split_taxa(row) for row in rows]
         clustered_rows = self.kmeans_clustering(ancestry_incl_rows, search=False)
+        self.load(clustered_rows)
 

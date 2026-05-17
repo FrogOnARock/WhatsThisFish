@@ -7,7 +7,8 @@ from torchvision import transforms
 from torchvision.transforms import v2
 from ultralytics.models.yolo.detect import DetectionTrainer, DetectionValidator
 
-from .od_dataset import ObjectDetectionDataset, init_gcs_worker
+from .od_dataset import ObjectDetectionDataset
+from ..config import init_gcs_worker
 
 
 def object_detection_collate(original_batch):
@@ -41,13 +42,18 @@ class ODDataLoader(DataLoader):
 
 def od_dataloader(mode: str, batch_size: int = 16, max_samples: int = None):
     base_transform = [
-        v2.Resize([640, 640]),
+        v2.Resize(size=(640, 640)),
         v2.ToImage(),
         v2.ToDtype(torch.float32, scale=True)
     ]
 
     if mode == "train":
-        base_transform.insert(1, v2.ColorJitter(brightness=0.4, saturation=0.8, hue=0.015))
+        to_insert = [
+            v2.ColorJitter(brightness=0.4, saturation=0.8, hue=0.015),
+            v2.RandomHorizontalFlip(),
+            v2.ScaleJitter(target_size=(640, 640), scale_range=(0.5, 2.0)),
+        ]
+        base_transform = to_insert + base_transform
         transform = v2.Compose(base_transform)
         od_dataset = ObjectDetectionDataset(transforms=transform, split=mode, max_samples=max_samples)
         sampler = WeightedRandomSampler(

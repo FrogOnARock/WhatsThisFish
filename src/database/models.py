@@ -222,10 +222,13 @@ class InatClassificationDataset(Base):
     genus: Mapped[int | None] = mapped_column(Integer)
     subfamily: Mapped[int | None] = mapped_column(Integer)
     cluster: Mapped[int | None] = mapped_column(Integer)
+    train: Mapped[int | None] = mapped_column(Integer)
+    proposed_bbox: Mapped[dict[str, Any]] = mapped_column(JSONB)
 
     __table_args__ = (
         Index("ix_inat_classification_dataset_cluster", "cluster"),
         Index("ix_inat_classification_dataset_uiqm", "uiqm"),
+        Index("ix_inat_classification_dataset", "train")
     )
 
 
